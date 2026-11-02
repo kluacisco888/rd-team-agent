@@ -63,6 +63,8 @@ from prd_agent.workflow import PrdWorkflow
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_CHARS = 20_000
+# The PRD analyzer is told this cap and the retriever enforces it.
+PRD_MAX_SEARCH_QUERIES = 12
 _DOCUMENTS = TypeAdapter(list[TaskDocument])
 
 
@@ -277,7 +279,9 @@ def build_orchestrator_app(settings: OrchestratorSettings) -> BedrockAgentCoreAp
     )
     service = PrdGenerationService(
         workflow=PrdWorkflow(
-            analyzer=StrandsRequirementAnalyzer(prd_agents),
+            analyzer=StrandsRequirementAnalyzer(
+                prd_agents, max_search_queries=PRD_MAX_SEARCH_QUERIES
+            ),
             retriever=AgentCoreKnowledgeBaseRetriever(
                 client=BedrockKnowledgeBaseRetrieveClient(
                     client=aws.client(
@@ -286,6 +290,7 @@ def build_orchestrator_app(settings: OrchestratorSettings) -> BedrockAgentCoreAp
                     knowledge_base_id=settings.knowledge_base_id,
                 ),
                 manifest_provider=manifests,
+                max_queries=PRD_MAX_SEARCH_QUERIES,
             ),
             composer=StrandsPrdComposer(prd_agents),
             max_repair_attempts=1,

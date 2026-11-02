@@ -6,6 +6,8 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
+from botocore.exceptions import ClientError
+
 MAX_EVENT_TEXT = 90_000  # one event payload must stay under the 100 KB message limit
 
 
@@ -135,11 +137,23 @@ class ConversationMemory:
             actorId=user_id,
             maxResults=100,
         )
-        items = [
-            {"session_id": item["sessionId"], "created_at": _iso(item.get("createdAt"))}
-            for item in summaries
-            if item.get("actorId", user_id) == user_id
-        ]
+        try:
+            items = [
+                {
+                    "session_id": item["sessionId"],
+                    "created_at": _iso(item.get("createdAt")),
+                }
+                for item in summaries
+                if item.get("actorId", user_id) == user_id
+            ]
+        except ClientError as error:
+            # ListSessions answers ResourceNotFoundException for an actor with no
+            # events yet, i.e. a user who has never chatted: no sessions.
+            if error.response.get("Error", {}).get("Code") != (
+                "ResourceNotFoundException"
+            ):
+                raise
+            return []
         return sorted(items, key=lambda item: item["created_at"] or "", reverse=True)
 
     def long_term(

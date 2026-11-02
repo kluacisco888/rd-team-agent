@@ -221,6 +221,29 @@ class MemoryTest(unittest.TestCase):
             [s["session_id"] for s in memory(client).sessions(user_id=USER)], ["a" * 40]
         )
 
+    def test_sessions_of_user_without_events_is_empty(self) -> None:
+        client = FakeMemoryClient()
+
+        def unknown_actor(**kwargs: Any) -> dict:
+            raise ClientError(
+                {"Error": {"Code": "ResourceNotFoundException"}}, "ListSessions"
+            )
+
+        client.list_sessions = unknown_actor
+        self.assertEqual(memory(client).sessions(user_id=USER), [])
+
+    def test_sessions_other_errors_propagate(self) -> None:
+        client = FakeMemoryClient()
+
+        def throttled(**kwargs: Any) -> dict:
+            raise ClientError(
+                {"Error": {"Code": "ThrottlingException"}}, "ListSessions"
+            )
+
+        client.list_sessions = throttled
+        with self.assertRaises(ClientError):
+            memory(client).sessions(user_id=USER)
+
 
 class ResultKeyTest(unittest.TestCase):
     def test_valid_key(self) -> None:

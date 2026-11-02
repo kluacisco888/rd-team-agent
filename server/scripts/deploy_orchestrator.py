@@ -156,6 +156,15 @@ def runtime_policy(
                 "Resource": f"arn:aws:s3:::{names.bucket}/results/*",
             },
             {
+                # Without ListBucket, S3 answers 403 instead of 404 for a missing
+                # result, which hides "no such task" behind an access error.
+                "Sid": "ListResults",
+                "Effect": "Allow",
+                "Action": "s3:ListBucket",
+                "Resource": f"arn:aws:s3:::{names.bucket}",
+                "Condition": {"StringLike": {"s3:prefix": "results/*"}},
+            },
+            {
                 "Sid": "RetrieveEvidence",
                 "Effect": "Allow",
                 "Action": "bedrock:Retrieve",

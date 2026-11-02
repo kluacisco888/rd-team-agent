@@ -157,6 +157,23 @@ class StrandsAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("untrusted evidence", factory.system_prompts[0])
         self.assertIn("validation_issues", factory.agents[1].calls[0][0])
 
+    async def test_analyzer_prompt_states_the_query_budget(self) -> None:
+        for options, expected in (
+            ({}, "at most\n12 focused"),
+            ({"max_search_queries": 5}, "at most\n5 focused"),
+        ):
+            with self.subTest(options=options):
+                factory = RecordingFactory([self.intent()])
+                await StrandsRequirementAnalyzer(factory, **options).analyze(
+                    self.request()
+                )
+                self.assertIn(expected, factory.system_prompts[0])
+                self.assertNotIn("{", factory.system_prompts[0])
+
+    def test_analyzer_rejects_non_positive_query_budget(self) -> None:
+        with self.assertRaisesRegex(ValueError, "max_search_queries"):
+            StrandsRequirementAnalyzer(RecordingFactory([]), max_search_queries=0)
+
     async def test_missing_structured_output_fails_closed(self) -> None:
         factory = RecordingFactory([None])
         with self.assertRaisesRegex(StructuredOutputError, "RequirementIntent"):

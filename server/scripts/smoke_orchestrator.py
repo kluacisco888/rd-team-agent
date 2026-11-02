@@ -116,6 +116,16 @@ class RuntimeClient:
             raise SmokeFailure(f"no events for {payload.get('action')}")
         return events[0]
 
+    def expect(self, payload: dict, event: str) -> dict[str, Any]:
+        """A read-only request that must answer with this event, not an error."""
+
+        reply = self.one(payload)
+        if reply.get("event") != event:
+            raise SmokeFailure(
+                f"{payload.get('action')} answered {json.dumps(reply)[:300]}"
+            )
+        return reply
+
 
 def run(args: argparse.Namespace) -> list[tuple[str, bool, str]]:
     state = json.loads(args.state_file.read_text(encoding="utf-8"))
@@ -157,7 +167,9 @@ def run(args: argparse.Namespace) -> list[tuple[str, bool, str]]:
     deadline = time.monotonic() + args.timeout_minutes * 60
     status: dict[str, Any] = {}
     while time.monotonic() < deadline:
-        reply = client.one({"action": "task_status", "task_id": task_id})
+        reply = client.expect(
+            {"action": "task_status", "task_id": task_id}, "task_status"
+        )
         status = reply.get("task", {})
         print(f"task {task_id}: {status.get('state')}")
         if status.get("state") in {"succeeded", "failed"}:
@@ -167,7 +179,9 @@ def run(args: argparse.Namespace) -> list[tuple[str, bool, str]]:
         ("task succeeds", status.get("state") == "succeeded", json.dumps(status)[:300])
     )
     if status.get("state") == "succeeded":
-        result = client.one({"action": "task_result", "task_id": task_id})
+        result = client.expect(
+            {"action": "task_result", "task_id": task_id}, "task_result"
+        )
         markdown = result.get("prd_markdown") or ""
         out = PROJECT_ROOT / "deploy" / "out" / "smoke" / f"{task_id}.md"
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -176,19 +190,21 @@ def run(args: argparse.Namespace) -> list[tuple[str, bool, str]]:
             ("PRD fetched", bool(markdown), f"{len(markdown)} chars -> {out}")
         )
 
-    sessions = client.one({"action": "list_sessions"}).get("sessions", [])
+    sessions = client.expect({"action": "list_sessions"}, "sessions")["sessions"]
     ids = [s["session_id"] for s in sessions]
     checks.append(("session listed", session_id in ids, f"{len(ids)} session(s)"))
-    history = client.one({"action": "history"}).get("messages", [])
+    history = client.expect({"action": "history"}, "history")["messages"]
     checks.append(("history recorded", len(history) >= 2, f"{len(history)} message(s)"))
-    memories = client.one({"action": "list_memories"}).get("records", [])
+    memories = client.expect({"action": "list_memories"}, "memories")["records"]
     print(
         f"long-term memory records: {len(memories)} (extraction runs in the background)"
     )
 
     if args.other_user:
         other = RuntimeClient(state, sign_in(state, args.other_user), session_id)
-        other_sessions = other.one({"action": "list_sessions"}).get("sessions", [])
+        other_sessions = other.expect({"action": "list_sessions"}, "sessions")[
+            "sessions"
+        ]
         checks.append(
             (
                 f"{args.other_user} cannot list the session",
@@ -196,7 +212,7 @@ def run(args: argparse.Namespace) -> list[tuple[str, bool, str]]:
                 "",
             )
         )
-        other_history = other.one({"action": "history"}).get("messages", [])
+        other_history = other.expect({"action": "history"}, "history")["messages"]
         checks.append(
             (
                 f"{args.other_user} sees no history",

@@ -189,12 +189,23 @@ class KnowledgeBaseRetrieverTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(KnowledgeBaseRetrievalError, "non-empty query"):
             await retriever.retrieve(self.request(), [" ", ""])
 
-    async def test_query_budget_is_enforced_before_retrieve_call(self) -> None:
-        client = FakeRetrieveClient({})
+    async def test_queries_over_budget_are_dropped_after_deduplication(self) -> None:
+        client = FakeRetrieveClient({"one": [self.passage()]})
         retriever = self.retriever(client, max_queries=2)
-        with self.assertRaisesRegex(KnowledgeBaseRetrievalError, "maximum of 2"):
-            await retriever.retrieve(self.request(), ["one", "two", "three"])
-        self.assertEqual(client.calls, [])
+        with self.assertLogs("prd_agent.knowledge_base", "WARNING") as logs:
+            result = await retriever.retrieve(
+                self.request(), ["one", " one ", "two", "three", "four"]
+            )
+        self.assertEqual([call["query"] for call in client.calls], ["one", "two"])
+        self.assertEqual([chunk.chunk_id for chunk in result.chunks], ["chunk-1"])
+        self.assertIn("dropping 2 of 4 search queries", logs.output[0])
+
+    async def test_queries_within_budget_log_nothing(self) -> None:
+        client = FakeRetrieveClient({"one": [self.passage()]})
+        retriever = self.retriever(client, max_queries=2)
+        with self.assertNoLogs("prd_agent.knowledge_base", "WARNING"):
+            await retriever.retrieve(self.request(), ["one", "two"])
+        self.assertEqual(len(client.calls), 2)
 
     async def test_non_code_passage_cannot_carry_commit(self) -> None:
         client = FakeRetrieveClient(
