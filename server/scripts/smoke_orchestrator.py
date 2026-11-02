@@ -98,8 +98,20 @@ class RuntimeClient:
             print()
         return events
 
-    def one(self, payload: dict) -> dict[str, Any]:
-        events = self.call(payload)
+    def one(self, payload: dict, *, attempts: int = 5) -> dict[str, Any]:
+        """A read-only request, retried when the connection drops (e.g. a proxy)."""
+
+        for attempt in range(1, attempts + 1):
+            try:
+                events = self.call(payload)
+                break
+            except httpx.TransportError as error:
+                if attempt == attempts:
+                    raise SmokeFailure(
+                        f"{payload.get('action')} failed: {error}"
+                    ) from error
+                print(f"connection error ({error}); retry {attempt}/{attempts - 1}")
+                time.sleep(5 * attempt)
         if not events:
             raise SmokeFailure(f"no events for {payload.get('action')}")
         return events[0]
@@ -108,7 +120,7 @@ class RuntimeClient:
 def run(args: argparse.Namespace) -> list[tuple[str, bool, str]]:
     state = json.loads(args.state_file.read_text(encoding="utf-8"))
     checks: list[tuple[str, bool, str]] = []
-    session_id = f"smoke-{uuid.uuid4().hex}"
+    session_id = args.session or f"smoke-{uuid.uuid4().hex}"
     print(f"session {session_id}")
     client = RuntimeClient(state, sign_in(state, args.user), session_id)
 
@@ -116,8 +128,9 @@ def run(args: argparse.Namespace) -> list[tuple[str, bool, str]]:
         {"path": path.name, "content": path.read_text(encoding="utf-8")}
         for path in args.attachment
     ]
-    message, task = args.message, None
-    for _ in range(4):
+    message = args.message
+    task = {"task_id": args.task_id} if args.task_id else None
+    for _ in range(0 if task else 4):
         print(f"\n> {message}\n")
         events = client.call(
             {"action": "chat", "message": message, "documents": documents}, echo=True
@@ -209,7 +222,14 @@ def main() -> int:
     parser.add_argument("--message", default=DEFAULT_MESSAGE)
     parser.add_argument("--attachment", type=Path, action="append")
     parser.add_argument("--timeout-minutes", type=int, default=20)
+    parser.add_argument("--session", help="reuse this Runtime session ID")
+    parser.add_argument(
+        "--task-id",
+        help="skip the chat and resume checks on this task (needs --session)",
+    )
     args = parser.parse_args()
+    if args.task_id and not args.session:
+        parser.error("--task-id needs the --session it was started in")
     args.attachment = args.attachment or [DEFAULT_ATTACHMENT]
     try:
         checks = run(args)
