@@ -1,0 +1,469 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Question: what should the rd-team-agent macOS chat app look like?
+  Three variants of the app window, switchable via ?variant=A|B|C, demo step via ?step=1..6.
+  The real app will be SwiftUI (C7); this HTML only mocks the window. All data is illustrative.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>原型 · 研发团队 Agent 对话 App（用完即弃）</title>
+<style>
+:root{--accent:#0f766e;--accent-soft:#e6f4f2;--text:#1f2328;--muted:#6e7781;--line:#d8dee4;--bg:#f6f8fa;--amber-soft:#fff8e5;--green:#1a7f37}
+*{box-sizing:border-box}
+body{margin:0;font:13px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;color:var(--text);background:linear-gradient(135deg,#dfe7ef,#eef1f5);min-height:100vh;padding:24px 20px 96px}
+.err{background:#ffebe9;color:#82071e;border:1px solid #ff8182;padding:8px 12px;border-radius:6px;max-width:1180px;margin:0 auto 10px;white-space:pre-wrap}
+.plan{max-width:1180px;margin:0 auto 10px;color:#57606a;font-size:12px}
+.win{max-width:1180px;height:740px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(15,23,42,.18),0 0 0 1px rgba(15,23,42,.12);overflow:hidden;display:flex;flex-direction:column;position:relative}
+.titlebar{height:38px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line);background:#f3f4f6;position:relative;z-index:6}
+.lights{display:flex;gap:8px}.lights i{width:12px;height:12px;border-radius:50%;display:block}
+.lights i:nth-child(1){background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.wtitle{font-weight:600;margin-left:6px}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px}
+.body{flex:1;display:flex;min-height:0}
+code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f2f4f7;padding:1px 4px;border-radius:4px}
+.muted{color:var(--muted)}
+.r{margin-left:auto}
+.side{width:232px;flex:none;background:var(--bg);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:12px 10px;gap:4px}
+.side .spacer{flex:1}
+.acct{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;margin-bottom:6px}
+.acct .nm{font-weight:600;line-height:1.2}.acct .sub{font-size:11px}
+.avatar{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:600;flex:none}
+.avatar.sm{width:22px;height:22px;font-size:10px}
+.newbtn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;text-align:left;font:inherit;color:var(--text);margin-bottom:6px}
+.grp{font-size:11px;color:var(--muted);margin:8px 8px 2px}
+.sess{padding:6px 8px;border-radius:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sess.active{background:#e3e8ee;font-weight:600}
+.side.dark{width:212px;background:#1f2328;color:#e6edf3;border-right:none}
+.side.dark .sess.active{background:#30363d}
+.side.dark .grp,.side.dark .muted{color:#8b949e}
+.side.dark .newbtn{background:#2d333b;border-color:#444c56;color:#e6edf3}
+.chat{flex:1;display:flex;flex-direction:column;min-width:0}
+.thread{flex:1;overflow:auto;padding:18px 20px;display:flex;flex-direction:column;gap:12px}
+.col{width:640px;max-width:100%;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.chat.center .thread{padding:22px 20px}
+.msg{display:flex;gap:8px}
+.msg.user{justify-content:flex-end}
+.msg .bubble{padding:9px 12px;border-radius:12px;max-width:80%}
+.msg.user .bubble{background:var(--accent-soft);border:1px solid #c9e7e2}
+.msg.agent .bubble{background:#fff;border:1px solid var(--line)}
+.msg .av{width:24px;height:24px;flex:none;border-radius:6px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:grid;place-items:center;margin-top:2px}
+.bubble ol{margin:6px 0 0;padding-left:20px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:12px}
+.chip em{font-style:normal;color:var(--muted)}
+.ft{font-size:9px;font-weight:700;color:#fff;border-radius:3px;padding:1px 4px;flex:none}
+.ft.MD{background:#57606a}.ft.PDF{background:#cf222e}.ft.CODE{background:var(--accent)}
+.composer{padding:10px 16px 12px;border-top:1px solid var(--line);background:#fff}
+.composer.center{border-top:none;padding-bottom:16px}
+.composer.center .cbox,.composer.center .chint{width:640px;max-width:100%;margin-left:auto;margin-right:auto}
+.cbox{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:6px 8px;background:#fff}
+.composer.center .cbox{box-shadow:0 2px 8px rgba(15,23,42,.08)}
+.clip,.send{width:26px;height:26px;border-radius:6px;border:1px solid var(--line);background:#fff;font:inherit;color:var(--muted);flex:none}
+.send{background:var(--accent);border-color:var(--accent);color:#fff}
+.cinput{flex:1;color:#8c959f}
+.chint{font-size:11px;color:var(--muted);margin-top:6px}
+.card{border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff}
+.card-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bar{height:6px;background:#eef1f4;border-radius:3px;margin:10px 0 8px;overflow:hidden}.bar i{display:block;height:100%;background:var(--accent)}
+.phases{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.phases li{display:flex;align-items:center;gap:8px}
+.pi{width:14px;height:14px;border-radius:50%;border:2px solid #c4cbd3;flex:none}
+.phases li.done .pi{background:var(--green);border-color:var(--green)}
+.phases li.run .pi{border-color:var(--accent);border-top-color:transparent}
+.phases li.run{font-weight:600}
+.phases li.todo{color:var(--muted)}
+.note{margin-top:8px;font-size:12px;color:var(--muted);background:var(--bg);border-radius:6px;padding:6px 8px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+.dot.run{background:var(--accent)}.dot.ok{background:var(--green)}.dot.wait{background:#bf8700}
+.badge{font-size:11px;font-weight:600;border-radius:10px;padding:1px 8px;white-space:nowrap}
+.badge.ok{background:#dafbe1;color:#116329}.badge.warn{background:#fff1c2;color:#7d4e00}.badge.run{background:var(--accent-soft);color:var(--accent)}
+.ficon{width:30px;height:36px;border-radius:4px;background:#57606a;color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;flex:none}
+.facts{display:flex;flex-direction:column;gap:2px;margin:10px 0 0;font-size:12px;color:var(--muted)}
+.btns{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:10px}
+.btn{font:inherit;font-size:12px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 10px;color:var(--text);white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.big{padding:7px 22px;font-size:13px}
+.btn[disabled]{opacity:.45}
+.card.t2{border-color:#d4a72c;background:var(--amber-soft)}
+.card.t2.resolved{opacity:.8}
+.card p{margin:8px 0 0;font-size:12px}
+.kv{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.kv th{text-align:left;color:var(--muted);font-weight:500;width:64px;padding:3px 0;vertical-align:top;white-space:nowrap}
+.kv td{padding:3px 0;word-break:break-all}
+.resolved-line{margin-top:8px;color:var(--green);font-size:12px;font-weight:600}
+.card.saved{display:flex;align-items:flex-start;gap:10px;border-color:#aceebb;background:#f0fff4}
+.card.saved .dot{margin-top:6px}
+.sysline{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:6px 10px;border:1px dashed var(--line);border-radius:8px;align-self:flex-start}
+.insp{width:316px;flex:none;border-left:1px solid var(--line);background:#fbfcfd;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:16px}
+.ih{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin-bottom:6px}
+.stack{display:flex;flex-direction:column;gap:10px}
+.empty{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:8px;padding:10px}
+.flist{display:flex;flex-direction:column;gap:8px}
+.fitem{display:flex;align-items:flex-start;gap:8px;font-size:12px}
+.fitem .ft{margin-top:3px}
+.mem{display:flex;flex-direction:column;gap:6px;font-size:12px}
+.mem div{display:flex;gap:6px;align-items:flex-start}
+.mtag{font-size:10px;border-radius:4px;padding:0 5px;background:#eef1f4;color:#57606a;flex:none;line-height:18px}
+.tb-sess{position:relative;margin-left:16px}
+.tbtn{font:inherit;font-size:12px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:3px 10px;cursor:pointer}
+.dd{position:absolute;top:30px;left:0;width:260px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px;z-index:20}
+.ddsep{border-top:1px solid var(--line);margin:6px 0}
+.cchat{width:390px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column}
+.canvas{flex:1;display:flex;flex-direction:column;min-width:0;background:#fafbfc}
+.cv-h{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:#fff}
+.cv-h .t{font-weight:700;font-size:14px}
+.cv-h .m{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;margin-top:2px}
+.cv-h .btnrow{display:flex;gap:8px}
+.cv-body{flex:1;display:flex;min-height:0}
+.outline{width:210px;flex:none;border-right:1px solid var(--line);overflow:auto;padding:10px 8px;font-size:12px;background:#fff}
+.outline div{padding:3px 8px;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.outline .sel{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.outline .pending{color:#afb8c1}
+.doc{flex:1;overflow:auto;padding:18px 24px;background:#fff}
+.doc h2{font-size:18px;margin:2px 0 6px}.doc h3{font-size:14px;margin:16px 0 6px}
+.dtable{width:100%;border-collapse:collapse;font-size:12px}
+.dtable th,.dtable td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+.dtable th{background:var(--bg)}
+.dtable code{word-break:break-all}
+.cv-empty{margin:auto;text-align:center;color:var(--muted);max-width:380px}
+.cv-empty .h{font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px}
+.srcs{display:flex;flex-direction:column;gap:8px;margin-top:14px;text-align:left;border:1px solid var(--line);border-radius:8px;padding:10px;background:#fff}
+.skel i{display:block;height:10px;background:#eef1f4;border-radius:4px;margin:10px 0}.skel i.s{width:60%}
+.sheet-bg{position:absolute;left:0;right:0;top:38px;bottom:0;background:rgba(15,23,42,.18);z-index:8}
+.sheet{position:absolute;top:38px;left:50%;transform:translateX(-50%);width:480px;background:#fff;border-radius:0 0 12px 12px;box-shadow:0 18px 40px rgba(0,0,0,.25);padding:18px 20px;z-index:9}
+.sheet h3{margin:10px 0 2px;font-size:15px}
+.login{flex:1;display:grid;place-items:center;background:#fafbfc;position:relative}
+.lcard{text-align:center}
+.dim{opacity:.35}
+.appicon{width:72px;height:72px;border-radius:16px;background:linear-gradient(160deg,#14b8a6,#0f766e);color:#fff;font-weight:800;font-size:20px;display:grid;place-items:center;margin:0 auto 12px;box-shadow:0 6px 16px rgba(15,118,110,.35)}
+.websheet{position:absolute;top:0;left:50%;transform:translateX(-50%);width:440px;background:#fff;border-radius:0 0 12px 12px;box-shadow:0 18px 40px rgba(0,0,0,.25);overflow:hidden}
+.urlbar{background:#f3f4f6;border-bottom:1px solid var(--line);padding:8px 12px;font-size:12px;color:var(--muted)}
+.cog{padding:22px 28px}
+.cog label{font-size:12px}
+.field{border:1px solid #c4cbd3;border-radius:6px;padding:7px 10px;margin:4px 0 12px}
+.switcher{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;background:#111827;color:#f9fafb;border-radius:999px;padding:6px 10px;box-shadow:0 10px 30px rgba(0,0,0,.35);font-size:12px;z-index:100;white-space:nowrap}
+.switcher button{font:inherit;color:inherit;background:#374151;border:none;border-radius:999px;padding:3px 9px;cursor:pointer}
+.switcher .arrow{font-size:15px;line-height:1;padding:3px 10px}
+.switcher .stp.on{background:#14b8a6;color:#04201d;font-weight:700}
+.switcher .sep{width:1px;height:18px;background:#4b5563}
+.switcher .tag{background:#f59e0b;color:#111827;border-radius:4px;padding:0 6px;font-weight:700;font-size:11px}
+#steps{display:flex;gap:4px}
+#vlabel{min-width:180px;text-align:center;font-weight:600}
+</style>
+</head>
+<body>
+<div class="plan"><b>原型（用完即弃）</b>：研发团队 Agent 对话 App 的 3 种布局。用 HTML 模拟 macOS 窗口，内容是示意数据。底部的条：← → 换方案，↑ ↓ 或数字键 1-6 换演示步骤。第 1 步登录在 3 个方案里相同。</div>
+<div class="win" id="win"></div>
+<div class="switcher">
+  <button class="arrow" id="prev" title="上一个方案（←）">‹</button>
+  <span id="vlabel"></span>
+  <button class="arrow" id="next" title="下一个方案（→）">›</button>
+  <span class="sep"></span>
+  <div id="steps"></div>
+  <span class="sep"></span>
+  <span class="tag">原型</span>
+</div>
+<script>
+window.addEventListener('error', function (e) {
+  var box = document.createElement('pre');
+  box.className = 'err';
+  box.textContent = '原型脚本出错：' + e.message + ' (line ' + e.lineno + ')';
+  document.body.insertBefore(box, document.body.firstChild);
+});
+
+// ---------- mock data (illustrative) ----------
+const STEPS = ['登录', '追问需求', '后台生成中', 'PRD 已生成', '确认保存', '已保存'];
+const SESSIONS = [
+  { g: '今天', items: [{ t: 'CSV 批量导入用户 PRD', active: true }] },
+  { g: '昨天', items: [{ t: '导出用户列表到 Excel' }] },
+  { g: '10 月 27 日', items: [{ t: '管理员审计日志需求' }] },
+];
+const ATTACH = [
+  { kind: 'MD', name: '用户反馈汇总.md', meta: '12 KB' },
+  { kind: 'PDF', name: '现有用户管理说明.pdf', meta: '11 页 · 提取 8,420 字' },
+];
+const QUESTIONS = [
+  '单次上限还是 10,000 行吗？要不要提高？',
+  '邮箱和已有用户重复时：跳过、更新已有用户，还是整行报错？',
+  '导入完成后，管理员怎么拿到失败明细：页面上下载错误报告，还是同时发邮件？',
+];
+const PHASES = ['检索附件和示例代码', '生成 PRD 正文', '校验章节和代码引用', '保存结果'];
+const PRD = { title: 'CSV Batch User Import', version: '第 1 版', sections: 24, size: '52 KB', warnings: 2,
+  attach: 2, codeRefs: 9, repo: 'rd-team-agent-sample-app', commit: 'a41c9e2' };
+const SAVE = { repo: 'kluacisco888/rd-team-agent-prds', path: 'prds/2026-10-30-csv-batch-user-import-v1.md',
+  msg: 'Add PRD: CSV Batch User Import v1 (demo-user-1)', commit: '9c1e2f0' };
+const MEMORY = [
+  { t: '偏好', s: '验收标准写成 Given / When / Then' },
+  { t: '事实', s: '示例产品现在只能在表单里逐个建用户' },
+  { t: '摘要', s: '昨天的会话：定了导出 Excel 的字段范围' },
+];
+const SECTIONS = ['1. Document Control', '2. Executive Summary', '3. Background and Problem', '4. Goals', '5. Non-Goals',
+  '6. Personas', '7. Scope', '8. User Flow', '9. Job State Model', '10. Functional Requirements', '11. Error Handling',
+  '12. Data Model', '13. API Contract', '14. Security and Privacy', '15. Non-Functional Requirements',
+  '16. Analytics and Success Metrics', '17. Code Impact', '18. Dependencies', '19. Rollout and Rollback',
+  '20. Risks and Mitigations', '21. Open Questions', '22. Evidence Ledger', '23. Definition of Ready', '24. Definition of Done'];
+const FRONT = [
+  ['admin-console/src/routes/users/import/index.tsx', 'Add import route and page orchestration'],
+  ['admin-console/src/components/user-import/FilePicker.tsx', 'Add CSV selection and advisory validation'],
+  ['admin-console/src/components/user-import/ImportProgress.tsx', 'Display job state and progress'],
+  ['admin-console/src/api/userImports.ts', 'Add typed API client'],
+];
+const BACK = [
+  ['services/admin-api/src/routes/user_imports.py', 'Add submission, status, list, cancellation, and report routes'],
+  ['services/user-import-worker/src/importer.py', 'Add idempotent user mutation'],
+  ['services/user-import-worker/src/error_report.py', 'Generate formula-safe CSV error reports'],
+  ['services/user-import-worker/src/state_machine.py', 'Enforce job-state transitions'],
+];
+
+function threadItems(step) {
+  const t = [];
+  if (step >= 2) {
+    t.push({ who: 'user', html: '帮我写一个 PRD：管理员可以上传 CSV，批量导入用户。背景材料在附件里。', attach: true });
+    t.push({ who: 'agent', html: '我读了你附带的 2 份文档，也查了示例代码仓 <code>' + PRD.repo + '</code> 里现有的用户管理代码。动笔前想确认 3 点：<ol>' +
+      QUESTIONS.map(q => '<li>' + q + '</li>').join('') + '</ol>' });
+  }
+  if (step >= 3) {
+    t.push({ who: 'user', html: '1. 保持 10,000 行。<br>2. 跳过，并在错误报告里列出。<br>3. 页面上下载就行。' });
+    t.push({ who: 'agent', html: '清楚了，开始生成 PRD。大约要 9 分钟，生成在后台进行，关掉 App 也不影响，回来时结果会在这个会话里。' });
+    t.push({ kind: 'progress' });
+  }
+  if (step >= 4) {
+    t.push({ who: 'agent', html: 'PRD 第 1 版生成好了，校验通过，本机也存了一份。要保存到 GitHub 的 PRD 文档库吗？保存前我会再请你确认一次。' });
+    t.push({ kind: 'prd' });
+  }
+  if (step >= 5) {
+    t.push({ who: 'user', html: '保存到 GitHub' });
+    t.push({ kind: 'confirm' });
+  }
+  if (step >= 6) t.push({ kind: 'saved' });
+  return t;
+}
+
+// ---------- shared pieces ----------
+const $ = s => document.querySelector(s);
+let ddOpen = false;
+
+function titlebar(center, right) {
+  return '<div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><div class="wtitle">研发团队 Agent</div>' +
+    (center || '') + '<div class="tb-right">' + (right || '') + '</div></div>';
+}
+function sessions() {
+  return SESSIONS.map(g => '<div class="grp">' + g.g + '</div>' +
+    g.items.map(s => '<div class="sess' + (s.active ? ' active' : '') + '">' + s.t + '</div>').join('')).join('');
+}
+function account() {
+  return '<div class="acct"><span class="avatar">U1</span><div><div class="nm">demo-user-1</div>' +
+    '<div class="sub muted">Cognito 测试账号</div></div><span class="r muted">▾</span></div>';
+}
+function attachChips() {
+  return '<div class="chips">' + ATTACH.map(a => '<span class="chip"><b class="ft ' + a.kind + '">' + a.kind + '</b>' +
+    a.name + '<em>' + a.meta + '</em></span>').join('') + '</div>';
+}
+function fileList() {
+  return '<div class="flist">' + ATTACH.map(a => '<div class="fitem"><b class="ft ' + a.kind + '">' + a.kind + '</b><div><div>' +
+    a.name + '</div><div class="muted">' + a.meta + '</div></div></div>').join('') + '</div>';
+}
+function msgHTML(m) {
+  if (m.who === 'user') return '<div class="msg user"><div class="bubble">' + m.html + (m.attach ? attachChips() : '') + '</div></div>';
+  return '<div class="msg agent"><div class="av">A</div><div class="bubble">' + m.html + '</div></div>';
+}
+function line(dot, text) {
+  return '<div class="sysline"><span class="dot ' + dot + '"></span>' + text + '</div>';
+}
+function composer(center) {
+  return '<div class="composer' + (center ? ' center' : '') + '"><div class="cbox"><button class="clip" title="附件">＋</button>' +
+    '<div class="cinput">回复，或拖入 .md / PDF 文件…</div><button class="send">↑</button></div>' +
+    '<div class="chint">附件支持 .md 和 PDF（PDF 在本机提取文字），最多 20 份、共 2 MB；只对这一次任务可见</div></div>';
+}
+function progressCard(step) {
+  const running = step === 3;
+  const st = running ? ['done', 'run', 'todo', 'todo'] : ['done', 'done', 'done', 'done'];
+  return '<div class="card"><div class="card-h"><span class="dot ' + (running ? 'run' : 'ok') + '"></span><b>' +
+    (running ? 'PRD 生成中（后台任务）' : 'PRD 生成完成') + '</b><span class="muted r">' +
+    (running ? '已用 03:40 · 预计还要约 5 分钟' : '用时 8 分 47 秒') + '</span></div>' +
+    '<div class="bar"><i style="width:' + (running ? 42 : 100) + '%"></i></div><ul class="phases">' +
+    PHASES.map((p, i) => '<li class="' + st[i] + '"><span class="pi"></span>' + p + '</li>').join('') + '</ul>' +
+    (running ? '<div class="note">可以关掉 App。App 定时查进度，查进度不经过模型。</div>' : '') + '</div>';
+}
+function prdCard(step) {
+  return '<div class="card"><div class="card-h"><span class="ficon">MD</span><div><b>' + PRD.title + '</b><div class="muted">' +
+    PRD.version + ' · ' + PRD.sections + ' 节 · ' + PRD.size + '</div></div><span class="badge ok r">校验通过</span></div>' +
+    '<div class="facts"><span>依据：附件 ' + PRD.attach + ' 份，代码引用 ' + PRD.codeRefs + ' 处（' + PRD.repo + ' @ ' + PRD.commit + '）</span>' +
+    '<span>警告 ' + PRD.warnings + ' 条，不影响使用</span></div><div class="btns"><button class="btn">预览全文</button>' +
+    '<button class="btn">在 Finder 中显示</button><button class="btn primary"' + (step >= 5 ? ' disabled' : '') + '>保存到 GitHub…</button></div></div>';
+}
+function confirmTable() {
+  return '<table class="kv"><tr><th>写到</th><td><code>' + SAVE.repo + '</code></td></tr><tr><th>文件</th><td><code>' + SAVE.path +
+    '</code></td></tr><tr><th>提交说明</th><td>' + SAVE.msg + '</td></tr><tr><th>提交作者</th><td>kluacisco888（令牌的主人）</td></tr></table>';
+}
+function confirmCard(step) {
+  const done = step >= 6;
+  return '<div class="card t2' + (done ? ' resolved' : '') + '"><div class="card-h"><span class="badge warn">需要你确认 · T2</span><b>把 PRD 写进 GitHub</b></div>' +
+    '<p class="muted">这一步会写入外部系统。你确认后，编排 Agent 才会调用 <code>save_prd_to_github</code>。</p>' + confirmTable() +
+    (done ? '<div class="resolved-line">✓ 你在 15:42 确认了</div>'
+          : '<div class="btns"><button class="btn">取消</button><button class="btn primary">确认保存</button></div>') + '</div>';
+}
+function savedCard() {
+  return '<div class="card saved"><span class="dot ok"></span><div><b>已保存到 GitHub</b><div class="muted"><code>' + SAVE.repo +
+    '</code> · 提交 <code>' + SAVE.commit + '</code></div><div class="muted"><code>' + SAVE.path + '</code></div></div>' +
+    '<button class="btn r">在 GitHub 打开</button></div>';
+}
+
+// ---------- step 1: login (same for all variants) ----------
+function loginView() {
+  return titlebar() + '<div class="body"><div class="login"><div class="lcard dim"><div class="appicon">PRD</div>' +
+    '<div style="font-size:18px;font-weight:700">研发团队 Agent</div><div class="muted" style="margin:4px 0 14px">用公司账号登录后开始对话</div>' +
+    '<button class="btn primary big">登录</button></div><div class="websheet"><div class="urlbar">rd-team-agent.auth.us-east-1.amazoncognito.com</div>' +
+    '<div class="cog"><div style="font-size:17px;font-weight:700;margin-bottom:14px">Sign in</div><label class="muted">Username</label>' +
+    '<div class="field">demo-user-1</div><label class="muted">Password</label><div class="field">••••••••••••</div>' +
+    '<button class="btn primary big" style="width:100%">Sign in</button><div class="muted" style="font-size:11px;margin-top:12px">' +
+    '系统登录窗口里打开的 Cognito 托管登录页（替身）。测试账号由管理员创建，不开放注册；以后换成公司的 Entra 或 Okta 登录页。</div></div></div></div></div>';
+}
+
+// ---------- variant A: three columns + inspector ----------
+function renderA(step) {
+  const items = threadItems(step).map(m => {
+    if (m.kind === 'progress') return line(step === 3 ? 'run' : 'ok', step === 3 ? 'PRD 生成中 · 第 2/4 步 · 详情见右侧「本次任务」' : 'PRD 生成完成 · 用时 8 分 47 秒');
+    if (m.kind === 'prd') return line('ok', 'PRD 第 1 版 · 24 节 · 校验通过 · 见右侧');
+    if (m.kind === 'confirm') return line(step === 5 ? 'wait' : 'ok', step === 5 ? '等你在右侧确认：写入 GitHub（T2）' : '你确认了写入 GitHub');
+    if (m.kind === 'saved') return line('ok', '已保存 · 提交 <code>' + SAVE.commit + '</code>');
+    return msgHTML(m);
+  }).join('');
+  let task;
+  if (step === 2) task = '<div class="empty">还没开始生成。需求问清楚后，进度和结果显示在这里。</div>';
+  else if (step === 3) task = progressCard(3);
+  else if (step === 4) task = prdCard(4);
+  else if (step === 5) task = confirmCard(5) + prdCard(5);
+  else task = savedCard() + prdCard(6);
+  const insp = '<div><div class="ih">本次任务</div><div class="stack">' + task + '</div></div>' +
+    '<div><div class="ih">附件 · 只对这次任务可见</div>' + fileList() + '</div>' +
+    '<div><div class="ih">我的长期记忆</div><div class="mem">' + MEMORY.map(x => '<div><span class="mtag">' + x.t + '</span><span>' + x.s + '</span></div>').join('') +
+    '</div><div class="muted" style="font-size:11px;margin-top:6px">按账号分开存，别人的会话里看不到。</div></div>';
+  return titlebar() + '<div class="body"><aside class="side">' + account() + '<button class="newbtn">＋ 新会话</button>' + sessions() +
+    '</aside><section class="chat"><div class="thread">' + items + '</div>' + composer(false) + '</section><aside class="insp">' + insp + '</aside></div>';
+}
+
+// ---------- variant B: single chat column, everything inline ----------
+function renderB(step) {
+  const items = threadItems(step).map(m => {
+    if (m.kind === 'progress') return progressCard(step);
+    if (m.kind === 'prd') return prdCard(step);
+    if (m.kind === 'confirm') return confirmCard(step);
+    if (m.kind === 'saved') return savedCard();
+    return msgHTML(m);
+  }).join('');
+  return titlebar() + '<div class="body"><aside class="side dark"><button class="newbtn">＋ 新会话</button>' + sessions() +
+    '<div class="spacer"></div>' + account() + '</aside><section class="chat center"><div class="thread"><div class="col">' + items +
+    '</div></div>' + composer(true) + '</section></div>';
+}
+
+// ---------- variant C: chat + PRD document canvas ----------
+function outline(step) {
+  return '<nav class="outline">' + SECTIONS.map((s, i) => {
+    const cls = step === 3 ? 'pending' : (i === 16 ? 'sel' : '');
+    return '<div class="' + cls + '">' + s + '</div>';
+  }).join('') + '</nav>';
+}
+function docSection() {
+  const rows = r => r.map(x => '<tr><td><code>' + x[0] + '</code></td><td>' + x[1] + '</td></tr>').join('');
+  return '<div class="muted" style="font-size:11px">第 17 / 24 节 · 正文是示意</div><h2>17. Code Impact</h2>' +
+    '<div class="muted">Evidence: <code>' + PRD.repo + '</code> @ <code>' + PRD.commit + '</code>, retrieved for this task.</div>' +
+    '<h3>17.1 Simulated Frontend Impact</h3><table class="dtable"><tr><th>Path</th><th>Change</th></tr>' + rows(FRONT) + '</table>' +
+    '<h3>17.2 Simulated Backend Impact</h3><table class="dtable"><tr><th>Path</th><th>Change</th></tr>' + rows(BACK) + '</table>';
+}
+function canvasC(step) {
+  if (step === 2) {
+    return '<div class="cv-h"><div><div class="t">PRD</div><div class="m muted">还没生成</div></div></div><div class="cv-body"><div class="cv-empty">' +
+      '<div class="h">PRD 会在这里显示</div><div>先在左边把需求说清楚。生成时会用到这些依据：</div><div class="srcs">' +
+      ATTACH.map(a => '<div class="fitem"><b class="ft ' + a.kind + '">' + a.kind + '</b><div><div>' + a.name + '</div><div class="muted">' + a.meta + '</div></div></div>').join('') +
+      '<div class="fitem"><b class="ft CODE">CODE</b><div><div>' + PRD.repo + ' @ ' + PRD.commit + '</div><div class="muted">示例代码仓，已同步进知识库</div></div></div></div></div></div>';
+  }
+  if (step === 3) {
+    return '<div class="cv-h"><div><div class="t">' + PRD.title + '</div><div class="m"><span class="badge run">生成中</span><span class="muted">已用 03:40</span></div></div></div>' +
+      '<div class="cv-body">' + outline(3) + '<div class="doc">' + progressCard(3) +
+      '<div class="skel"><div class="muted" style="margin-top:16px">生成完并通过校验后，正文显示在这里。</div><i></i><i></i><i class="s"></i><i></i><i class="s"></i></div></div></div>';
+  }
+  const saved = step === 6 ? '<span class="badge ok">已保存到 GitHub · ' + SAVE.commit + '</span>' : '';
+  return '<div class="cv-h"><div><div class="t">' + PRD.title + '</div><div class="m"><span class="muted">' + PRD.version + ' · ' + PRD.sections + ' 节 · ' +
+    PRD.size + '</span><span class="badge ok">校验通过</span>' + saved + '</div></div><div class="r btnrow"><button class="btn">另存为 .md</button>' +
+    '<button class="btn">在 Finder 中显示</button><button class="btn primary"' + (step >= 5 ? ' disabled' : '') + '>保存到 GitHub…</button></div></div>' +
+    '<div class="cv-body">' + outline(4) + '<div class="doc">' + docSection() + '</div></div>';
+}
+function renderC(step) {
+  const items = threadItems(step).map(m => {
+    if (m.kind === 'progress') return line(step === 3 ? 'run' : 'ok', step === 3 ? 'PRD 生成中，进度见右侧' : 'PRD 生成完成，已在右侧打开');
+    if (m.kind === 'prd') return '';
+    if (m.kind === 'confirm') return line(step === 5 ? 'wait' : 'ok', step === 5 ? '等你确认：写入 GitHub（T2）' : '你确认了写入 GitHub');
+    if (m.kind === 'saved') return line('ok', '已保存 · 提交 <code>' + SAVE.commit + '</code>');
+    return msgHTML(m);
+  }).join('');
+  const center = '<div class="tb-sess"><button class="tbtn" id="ddbtn">CSV 批量导入用户 PRD ▾</button>' +
+    (ddOpen ? '<div class="dd">' + sessions() + '<div class="ddsep"></div><div class="sess">＋ 新会话</div></div>' : '') + '</div>';
+  const right = '<span class="avatar sm">U1</span><span>demo-user-1 ▾</span>';
+  const sheet = step === 5 ? '<div class="sheet-bg"></div><div class="sheet"><div class="card-h"><span class="badge warn">需要你确认 · T2</span></div>' +
+    '<h3>把 PRD 写进 GitHub？</h3><p class="muted" style="margin:0 0 4px;font-size:12px">这一步会写入外部系统。你确认后，编排 Agent 才会调用 <code>save_prd_to_github</code>。</p>' +
+    confirmTable() + '<div class="btns"><button class="btn">取消</button><button class="btn primary">确认保存</button></div></div>' : '';
+  return titlebar(center, right) + '<div class="body"><section class="cchat"><div class="thread">' + items + '</div>' + composer(false) +
+    '</section><section class="canvas">' + canvasC(step) + '</section></div>' + sheet;
+}
+
+// ---------- switcher ----------
+const VARIANTS = [
+  { key: 'A', name: '三栏 + 检查器', render: renderA },
+  { key: 'B', name: '单栏对话，卡片内联', render: renderB },
+  { key: 'C', name: '对话 + PRD 文档画布', render: renderC },
+];
+function readURL() {
+  const p = new URLSearchParams(location.search);
+  let v = (p.get('variant') || 'A').toUpperCase();
+  if (!VARIANTS.some(x => x.key === v)) v = 'A';
+  let s = parseInt(p.get('step') || '4', 10);
+  if (!(s >= 1 && s <= 6)) s = 4;
+  return { variant: v, step: s };
+}
+const state = readURL();
+function writeURL() {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.set('variant', state.variant);
+    u.searchParams.set('step', String(state.step));
+    history.replaceState(null, '', u);
+  } catch (e) { /* file:// may refuse; the switcher still works */ }
+}
+function render() {
+  const v = VARIANTS.find(x => x.key === state.variant);
+  $('#win').innerHTML = state.step === 1 ? loginView() : v.render(state.step);
+  $('#vlabel').textContent = v.key + ' · ' + v.name;
+  $('#steps').innerHTML = STEPS.map((s, i) => '<button class="stp' + (state.step === i + 1 ? ' on' : '') + '" data-step="' + (i + 1) + '">' + (i + 1) + ' ' + s + '</button>').join('');
+  document.querySelectorAll('.thread').forEach(t => { t.scrollTop = t.scrollHeight; });
+  writeURL();
+}
+function cycle(d) {
+  const i = VARIANTS.findIndex(x => x.key === state.variant);
+  state.variant = VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].key;
+  ddOpen = false;
+  render();
+}
+function go(s) {
+  state.step = Math.min(6, Math.max(1, s));
+  ddOpen = false;
+  render();
+}
+$('#prev').addEventListener('click', () => cycle(-1));
+$('#next').addEventListener('click', () => cycle(1));
+$('#steps').addEventListener('click', e => { const b = e.target.closest('[data-step]'); if (b) go(+b.dataset.step); });
+document.addEventListener('click', e => { if (e.target.closest('#ddbtn')) { ddOpen = !ddOpen; render(); } });
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && t.closest && t.closest('input,textarea,[contenteditable]')) return;
+  if (e.key === 'ArrowLeft') { cycle(-1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { cycle(1); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { go(state.step - 1); e.preventDefault(); }
+  else if (e.key === 'ArrowDown') { go(state.step + 1); e.preventDefault(); }
+  else if (/^[1-6]$/.test(e.key)) go(+e.key);
+});
+render();
+</script>
+</body>
+</html>

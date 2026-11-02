@@ -1,0 +1,33 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.log
+
+# AgentCore local/deployment cache and machine-specific config
+.bedrock_agentcore/
+.bedrock_agentcore.yaml
+deploy/out/
+
+# Editors and operating system
+.DS_Store
+.idea/
+.vscode/

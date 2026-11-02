@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentcore-prd-agent"
+version = "0.1.0"
+description = "An English PRD generation agent built with Strands and Amazon Bedrock AgentCore."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "bedrock-agentcore==1.23.0",
+  "pydantic==2.13.5",
+  "strands-agents==1.55.1",
+]
+
+[project.optional-dependencies]
+dev = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["prd_agent*"]
+
+[tool.coverage.run]
+branch = true
+source = ["prd_agent"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

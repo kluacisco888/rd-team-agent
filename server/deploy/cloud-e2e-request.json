@@ -1,0 +1,10 @@
+{
+  "run_id": "cloud-e2e-001",
+  "project_id": "mock-prd-e2e",
+  "requirement_text": "Enhance the existing CSV batch user import so administrators can preview all validation errors and affected rows before explicitly confirming the import. Preserve the 10,000-row limit, asynchronous processing, downloadable error report, and idempotency. Do not add XLSX support.",
+  "prd_contract_version": "mock-csv-import-v0.1",
+  "repository": "agentcore-prd-agent",
+  "repository_commit": "source-e64458e4e606c9194f5ce99b",
+  "mode": "one_shot",
+  "output_language": "en-US"
+}

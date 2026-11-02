@@ -1,0 +1,521 @@
+{
+  "document_title": "MOCK Product Requirements Document: CSV Batch User Import",
+  "language": "en-US",
+  "preamble": "> **MOCK / NON-AUTHORITATIVE SAMPLE**\n>\n> This document describes a fictional feature for evaluation and testing purposes only. It is intended to test a PRD-generation system built with Strands and Amazon Bedrock AgentCore. It does not describe an actual product, repository, API, customer commitment, implementation plan, AWS account, or deployed resource.",
+  "sections": [
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Field",
+            "Value"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "1.1 Requirement Language",
+        "1.2 Evidence Labels"
+      ],
+      "section_id": "section-01-document-control",
+      "table_columns": [],
+      "title": "1. Document Control"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-02-executive-summary",
+      "table_columns": [],
+      "title": "2. Executive Summary"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "3.1 Background",
+        "3.2 Problem Statement"
+      ],
+      "section_id": "section-03-background-and-problem",
+      "table_columns": [],
+      "title": "3. Background and Problem"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "ID",
+            "Goal"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-04-goals",
+      "table_columns": [],
+      "title": "4. Goals"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-05-non-goals",
+      "table_columns": [],
+      "title": "5. Non-Goals"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "6.1 Organization Administrator",
+        "6.2 Support Specialist",
+        "6.3 Security or Compliance Reviewer"
+      ],
+      "section_id": "section-06-personas",
+      "table_columns": [],
+      "title": "6. Personas"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Column",
+            "Required",
+            "Type",
+            "Rules"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "7.1 In Scope",
+        "7.2 Out of Scope",
+        "7.3 Proposed Supported CSV Schema",
+        "7.4 Example CSV"
+      ],
+      "section_id": "section-07-scope",
+      "table_columns": [],
+      "title": "7. Scope"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-08-user-flow",
+      "table_columns": [],
+      "title": "8. User Flow"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "State",
+            "Meaning",
+            "Terminal"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "9.1 States",
+        "9.2 State Rules"
+      ],
+      "section_id": "section-09-job-state-model",
+      "table_columns": [],
+      "title": "9. Job State Model"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "FR-001: Access Control",
+        "FR-002: Template Download",
+        "FR-003: File Selection and Advisory Client Validation",
+        "FR-004: UTF-8 CSV Parsing",
+        "FR-005: File Type Enforcement",
+        "FR-006: Row Limit",
+        "FR-007: Header Validation",
+        "FR-008: Row Validation",
+        "FR-009: Duplicate Detection Within a File",
+        "FR-010: Existing-User Conflict Handling",
+        "FR-011: Asynchronous Job Creation",
+        "FR-012: Import Progress",
+        "FR-013: Partial-Success Processing",
+        "FR-014: Idempotent Submission",
+        "FR-015: Idempotent Row Mutation",
+        "FR-016: Final Summary",
+        "FR-017: Downloadable Error Report",
+        "FR-018: Job History",
+        "FR-019: Cancellation",
+        "FR-020: Audit Logging",
+        "FR-021: Retry of System Failures"
+      ],
+      "section_id": "section-10-functional-requirements",
+      "table_columns": [],
+      "title": "10. Functional Requirements"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Category",
+            "Scope",
+            "Example behavior"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "11.1 Error Categories",
+        "11.2 Error Response Shape",
+        "11.3 Error-Message Requirements"
+      ],
+      "section_id": "section-11-error-handling",
+      "table_columns": [],
+      "title": "11. Error Handling"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Field",
+            "Type",
+            "Description"
+          ],
+          "minimum_rows": 1
+        },
+        {
+          "columns": [
+            "Field",
+            "Type",
+            "Description"
+          ],
+          "minimum_rows": 1
+        },
+        {
+          "columns": [
+            "Field",
+            "Type",
+            "Description"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "12.1 `UserImportJob`",
+        "12.2 `UserImportRowResult`",
+        "12.3 `UserImportIdempotencyRecord`",
+        "12.4 Data Integrity Constraints"
+      ],
+      "section_id": "section-12-data-model",
+      "table_columns": [],
+      "title": "12. Data Model"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Part",
+            "Required",
+            "Description"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "13.1 Create Import Job",
+        "13.2 Retrieve Job",
+        "13.3 List Jobs",
+        "13.4 Download Error Report",
+        "13.5 Cancel Job",
+        "13.6 API Semantics"
+      ],
+      "section_id": "section-13-api-contract",
+      "table_columns": [],
+      "title": "13. API Contract"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "14.1 Authorization",
+        "14.2 Tenant Isolation",
+        "14.3 Data Protection",
+        "14.4 File Safety",
+        "14.5 Privacy",
+        "14.6 Audit and Abuse Prevention"
+      ],
+      "section_id": "section-14-security-and-privacy",
+      "table_columns": [],
+      "title": "14. Security and Privacy"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "NFR-001: Capacity",
+        "NFR-002: Performance",
+        "NFR-003: Availability and Durability",
+        "NFR-004: Scalability",
+        "NFR-005: Observability",
+        "NFR-006: Accessibility",
+        "NFR-007: Compatibility",
+        "NFR-008: Localization",
+        "NFR-009: Maintainability",
+        "NFR-010: Recovery"
+      ],
+      "section_id": "section-15-non-functional-requirements",
+      "table_columns": [],
+      "title": "15. Non-Functional Requirements"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Metric",
+            "Definition",
+            "Proposed target",
+            "Status"
+          ],
+          "minimum_rows": 1
+        },
+        {
+          "columns": [
+            "Event",
+            "Trigger",
+            "Allowed properties"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "16.1 Product Metrics",
+        "16.2 Operational Metrics",
+        "16.3 Analytics Privacy",
+        "16.4 Proposed Analytics Events"
+      ],
+      "section_id": "section-16-analytics-and-success-metrics",
+      "table_columns": [],
+      "title": "16. Analytics and Success Metrics"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Simulated path",
+            "Simulated change"
+          ],
+          "minimum_rows": 1
+        },
+        {
+          "columns": [
+            "Simulated path",
+            "Simulated change"
+          ],
+          "minimum_rows": 1
+        },
+        {
+          "columns": [
+            "Simulated path",
+            "Simulated change"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "17.1 Simulated Frontend Impact",
+        "17.2 Simulated Backend Impact",
+        "17.3 Simulated Data and Contract Impact",
+        "17.4 Test Impact"
+      ],
+      "section_id": "section-17-code-impact",
+      "table_columns": [],
+      "title": "17. Code Impact"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Dependency",
+            "Purpose",
+            "Status"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-18-dependencies",
+      "table_columns": [],
+      "title": "18. Dependencies"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [
+        "19.1 Proposed Rollout",
+        "19.2 Rollout Gates",
+        "19.3 Rollback Strategy",
+        "19.4 Rollback Acceptance Criteria"
+      ],
+      "section_id": "section-19-rollout-and-rollback",
+      "table_columns": [],
+      "title": "19. Rollout and Rollback"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Risk",
+            "Impact",
+            "Likelihood",
+            "Mitigation"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-20-risks-and-mitigations",
+      "table_columns": [],
+      "title": "20. Risks and Mitigations"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "ID",
+            "Question",
+            "Decision owner",
+            "Blocking"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-21-open-questions",
+      "table_columns": [],
+      "title": "21. Open Questions"
+    },
+    {
+      "embedded_tables": [
+        {
+          "columns": [
+            "Evidence ID",
+            "Statement",
+            "Classification",
+            "Source",
+            "Confidence",
+            "Impact"
+          ],
+          "minimum_rows": 1
+        }
+      ],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-22-evidence-ledger",
+      "table_columns": [],
+      "title": "22. Evidence Ledger"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-23-definition-of-ready",
+      "table_columns": [],
+      "title": "23. Definition of Ready"
+    },
+    {
+      "embedded_tables": [],
+      "kind": "markdown",
+      "level": 2,
+      "required": true,
+      "required_markers": [],
+      "required_subheadings": [],
+      "section_id": "section-24-definition-of-done",
+      "table_columns": [],
+      "title": "24. Definition of Done"
+    }
+  ],
+  "source_sha256": "c27d1a2277bf7cb433ce80e854b0f964273f2e5c9ec50db39c4c9e27a4704a34",
+  "version": "mock-csv-import-v0.1"
+}

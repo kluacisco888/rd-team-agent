@@ -1,0 +1,16 @@
+{
+  "event_count": 34,
+  "final_event": "result",
+  "progress_event_count": 32,
+  "run_id": "cloud-e2e-001",
+  "runtime_session_id": "mock-prd-e2e-session-20260915-000007",
+  "status": "completed",
+  "versions": {
+    "knowledge_base_snapshot": "LPHPWHOZTT",
+    "model_id": "us.anthropic.claude-opus-4-6-v1",
+    "prd_contract_version": "mock-csv-import-v0.1",
+    "prompt_version": "mock-v5",
+    "repository_commit": "source-e64458e4e606c9194f5ce99b",
+    "runtime_version": "mock-v5"
+  }
+}
