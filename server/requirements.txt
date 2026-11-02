@@ -1,3 +1,4 @@
 bedrock-agentcore==1.23.0
 pydantic==2.13.5
 strands-agents==1.55.1
+pyjwt[crypto]==2.15.1

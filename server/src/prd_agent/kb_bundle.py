@@ -178,6 +178,50 @@ def build_mock_bundle(
     )
 
 
+def build_code_bundle(
+    source_root: Path,
+    *,
+    project_id: str,
+    repository: str,
+    commit_sha: str,
+    max_chars: int = 5000,
+) -> KnowledgeBaseBundle:
+    """Build code-only S3 objects and the source manifest for one repository commit.
+
+    ``source_root`` must hold exactly that commit's files, for example a
+    ``git archive`` export, because ``commit_sha`` is recorded as given.
+    """
+
+    snapshot = build_repository_snapshot(
+        source_root,
+        project_id=project_id,
+        repository=repository,
+        commit_sha=commit_sha,
+        max_chars=max_chars,
+    )
+    if not snapshot.chunks:
+        raise ValueError("source_root contains no supported source files")
+
+    objects: list[BundleObject] = []
+    for chunk in snapshot.chunks:
+        objects.extend(_code_objects(chunk))
+    objects.sort(key=lambda item: item.key)
+
+    manifest = build_manifest_document(
+        snapshot,
+        project_id=project_id,
+        repository=repository,
+        commit_sha=commit_sha,
+    )
+    return KnowledgeBaseBundle(
+        project_id=project_id,
+        repository=repository,
+        commit_sha=commit_sha,
+        objects=tuple(objects),
+        manifest=manifest,
+    )
+
+
 def write_runtime_manifest(bundle: KnowledgeBaseBundle, root: Path) -> Path:
     """Write the exact manifest layout expected by FileSourceManifestProvider."""
 
