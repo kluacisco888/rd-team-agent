@@ -106,6 +106,12 @@ public struct LocalIndex: Codable, Sendable, Equatable {
         }
     }
 
+    /// After the server deleted the session. PRD files already saved on this
+    /// Mac stay where they are; only the record pointing at them goes.
+    public mutating func removeSession(_ id: String) {
+        sessions.removeValue(forKey: id)
+    }
+
     /// A nil group moves the session to 未分组.
     public mutating func moveSession(_ id: String, toGroup groupId: String?, createdAt: Date) throws {
         if let groupId, !groups.contains(where: { $0.id == groupId }) { throw LocalIndexError.unknownGroup }

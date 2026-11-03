@@ -39,6 +39,9 @@ import Testing
             SessionSummary(sessionId: "s1", createdAt: ISODate.parse("2026-11-02T12:00:00+00:00")),
             SessionSummary(sessionId: "s2", createdAt: nil),
         ]))
+        let withDeleted = try SSEParser.event(fromLine:
+            #"data: {"event":"sessions","sessions":[],"deleted_session_ids":["s3"]}"#)
+        #expect(withDeleted == .sessions([], deletedIds: ["s3"]))
         let history = try SSEParser.event(fromLine:
             #"data: {"event":"history","messages":[{"role":"user","text":"hi","at":"2026-11-02T12:00:00+00:00"}]}"#)
         #expect(history == .history([HistoryMessage(role: "user", text: "hi", at: ISODate.parse("2026-11-02T12:00:00Z"))]))
@@ -61,6 +64,49 @@ import Testing
         #expect(done.prdBytes == 12)
         #expect(done.validationPassed == true)
         #expect(markdown == "# PRD")
+    }
+
+    @Test func retryFieldsAndOptions() throws {
+        let event = try SSEParser.event(fromLine:
+            #"data: {"event":"task_status","task":{"task_id":"task-4","state":"failed","input_saved":true,"retried_from":"task-3","error":{"code":"GENERATION_FAILED"}}}"#)
+        guard case .taskStatus(let task)? = event else { Issue.record("not task_status"); return }
+        #expect(task.inputSaved)
+        #expect(task.retriedFrom == "task-3")
+        #expect(task.retriedAs == nil)
+        #expect(task.retryOption == .retry)
+
+        func option(_ state: TaskState, code: String? = "GENERATION_FAILED", saved: Bool = true, retriedAs: String? = nil)
+            -> TaskStatus.RetryOption {
+            TaskStatus(taskId: "t", state: state, errorCode: code, inputSaved: saved, retriedAs: retriedAs).retryOption
+        }
+        #expect(option(.failed, saved: false) == .reattach)
+        #expect(option(.failed, code: "JOB_LOST") == .retry)
+        #expect(option(.failed, code: nil) == .retry)
+        #expect(option(.failed, retriedAs: "task-5") == .none)
+        #expect(option(.failed, code: "INVALID_DOCUMENTS") == .none)
+        #expect(option(.failed, code: "NEEDS_CLARIFICATION", saved: false) == .none)
+        #expect(option(.running) == .none)
+        #expect(option(.succeeded) == .none)
+        // Statuses written before the server saved inputs have no input_saved key.
+        let old = try SSEParser.event(fromLine: #"data: {"event":"task_status","task":{"task_id":"task-6","state":"failed"}}"#)
+        guard case .taskStatus(let legacy)? = old else { Issue.record("not task_status"); return }
+        #expect(legacy.retryOption == .reattach)
+    }
+
+    @Test func sessionDeletedEvent() throws {
+        let event = try SSEParser.event(fromLine:
+            #"data: {"event":"session_deleted","session_id":"rdta-1","deleted":{"events":2,"summaries":1,"result_objects":5}}"#)
+        #expect(event == .sessionDeleted("rdta-1"))
+        #expect(throws: RuntimeClientError.malformedEvent) {
+            try SSEParser.event(fromLine: #"data: {"event":"session_deleted"}"#)
+        }
+    }
+
+    @Test func deleteAndRetryErrorsReadInChinese() {
+        #expect(ServerError(code: "TASK_RUNNING", message: "a PRD task ... task-1").errorDescription
+            == "这个会话里还有 PRD 正在生成，等它结束后再删。")
+        #expect(ServerError(code: "NOT_RETRYABLE", message: "Only a failed task can be retried.").errorDescription
+            == "这个任务现在不能重试，请重新载入会话后再看。")
     }
 
     @Test func malformedEventsThrow() {
@@ -158,6 +204,10 @@ import Testing
         #expect(Transcript.notice(fromAssistantText: "PRD generation for task \(id) failed: X.")
             == "PRD 生成没有完成（\(id)）")
         #expect(Transcript.notice(fromAssistantText: "任务 ID 是 \(id)") == nil)
+        let next = "task-" + String(repeating: "b", count: 32)
+        #expect(Transcript.notice(fromAssistantText:
+            "PRD task \(id) was retried as task \(next) with the same requirement and documents.")
+            == "已用原来的需求和附件重试（\(id) → \(next)）")
     }
 
     @Test func taskIdsAreFoundOnce() {

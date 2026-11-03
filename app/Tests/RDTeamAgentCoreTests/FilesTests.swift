@@ -217,6 +217,18 @@ private func makePDF(in folder: URL, name: String, text: String?) throws -> URL 
         #expect(index.sessions["server-only"]?.groupId == nil)
     }
 
+    @Test func removingASessionKeepsGroupsAndOtherSessions() throws {
+        var index = LocalIndex(utilitySessionId: "utility")
+        let group = try index.createGroup(named: "管理后台")
+        index.sessions["s1"] = SessionRecord(title: "一", taskIds: ["task-1"], savedFiles: ["task-1": "/tmp/a.md"], groupId: group.id)
+        index.sessions["s2"] = SessionRecord(title: "二", groupId: group.id)
+        index.removeSession("s1")
+        index.removeSession("never-seen")
+        #expect(Array(index.sessions.keys) == ["s2"])
+        #expect(index.groups == [group])
+        #expect(index.utilitySessionId == "utility")
+    }
+
     @Test func groupsSurviveSaveAndLoad() throws {
         let store = LocalIndexStore(userId: "u2", baseFolder: try temporaryFolder())
         var index = LocalIndex()

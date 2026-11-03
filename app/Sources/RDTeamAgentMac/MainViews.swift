@@ -132,6 +132,7 @@ final class SidebarState: ObservableObject {
     @Published var nameDialog: NameDialog?
     @Published var nameText = ""
     @Published var groupToDelete: SessionGroup?
+    @Published var sessionToDelete: SessionItem?
 
     func ask(_ dialog: NameDialog, prefill: String = "") {
         nameText = prefill
@@ -193,6 +194,27 @@ struct SessionSidebar: View {
         } message: { group in
             Text("里面的 \(model.sessions.filter { $0.groupId == group.id }.count) 个会话会回到「未分组」，会话本身不删。")
         }
+        .onDeleteCommand {
+            guard let id = model.selectedSessionId, let session = model.sessions.first(where: { $0.id == id }) else { return }
+            state.sessionToDelete = session
+        }
+        .background {
+            // Kept on its own view: two dialogs on one view can conflict.
+            Color.clear.confirmationDialog(
+                "删除会话「\(state.sessionToDelete?.title ?? "")」？",
+                isPresented: deleteSessionDialogShown,
+                titleVisibility: .visible,
+                presenting: state.sessionToDelete
+            ) { session in
+                Button("删除会话", role: .destructive) { Task { await model.deleteSession(session.id) } }
+                Button("取消", role: .cancel) {}
+            } message: { _ in
+                Text("""
+                会删除服务端上的：这个会话的对话记录、会话摘要、生成的 PRD 结果。删除后不能恢复。
+                会保留：你的偏好和事实记忆（跨会话通用），以及已存到本机「文稿/研发团队 Agent」的 PRD 文件。
+                """)
+            }
+        }
         .safeAreaInset(edge: .top) {
             Button {
                 model.newSession()
@@ -253,6 +275,10 @@ struct SessionSidebar: View {
         Binding(get: { state.groupToDelete != nil }, set: { if !$0 { state.groupToDelete = nil } })
     }
 
+    private var deleteSessionDialogShown: Binding<Bool> {
+        Binding(get: { state.sessionToDelete != nil }, set: { if !$0 { state.sessionToDelete = nil } })
+    }
+
     /// A rejected name (empty, too long, taken) is reported in the banner.
     private func saveName(_ dialog: SidebarState.NameDialog) {
         let text = state.nameText
@@ -273,9 +299,18 @@ private struct SessionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(session.title).lineLimit(1)
-            Text(Format.dateTime(session.createdAt))
+            if model.deletingSessionId == session.id {
+                HStack(spacing: 4) {
+                    ProgressView().controlSize(.mini)
+                    Text("正在删除…")
+                }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            } else {
+                Text(Format.dateTime(session.createdAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 2)
         .contextMenu {
@@ -294,6 +329,9 @@ private struct SessionRow: View {
                     Button("移出分组") { report(model.moveSession(session.id, toGroup: nil)) }
                 }
             }
+            Divider()
+            Button("删除…", role: .destructive) { state.sessionToDelete = session }
+                .disabled(model.deletingSessionId != nil || model.sendingSessionId == session.id)
         }
     }
 

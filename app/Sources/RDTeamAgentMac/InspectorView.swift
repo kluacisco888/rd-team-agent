@@ -93,6 +93,19 @@ private struct TaskCard: View {
                 Text(task.failureDescription ?? "状态未知。")
                     .font(.callout)
                     .foregroundStyle(.red)
+                retry
+            }
+            if let from = task.retriedFrom {
+                Text("重试自 \(String(from.prefix(13)))…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(from)
+            }
+            if let next = task.retriedAs {
+                Text("已重试，新任务 \(String(next.prefix(13)))…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(next)
             }
             if !task.documents.isEmpty {
                 Text("依据的附件：\(task.documents.joined(separator: "、"))")
@@ -102,6 +115,29 @@ private struct TaskCard: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
+    }
+
+    @ViewBuilder private var retry: some View {
+        switch task.retryOption {
+        case .retry:
+            let busy = model.retryingTaskIds.contains(task.taskId)
+            HStack {
+                Button(busy ? "正在重试…" : "重试") { Task { await model.retryTask(task.taskId) } }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(busy)
+                Text("用原来的需求和附件重新生成，不用再发消息。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .reattach:
+            let files = task.documents.isEmpty ? "附件" : "「\(task.documents.joined(separator: "、"))」"
+            Text("这个任务创建时服务端还不保存输入，不能一键重试。请重新附加\(files)，再在对话里说「重新生成」。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .none:
+            EmptyView()
+        }
     }
 
     private var badge: some View {

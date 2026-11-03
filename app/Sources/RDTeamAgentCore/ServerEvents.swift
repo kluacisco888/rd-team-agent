@@ -17,11 +17,16 @@ public struct TaskStatus: Sendable, Equatable, Identifiable {
     public let validationPassed: Bool?
     public let errorCode: String?
     public let errorMessage: String?
+    /// The server kept the requirement and documents, so the task can be retried.
+    public let inputSaved: Bool
+    public let retriedFrom: String?
+    public let retriedAs: String?
 
     public init(
         taskId: String, state: TaskState, startedAt: Date? = nil, finishedAt: Date? = nil,
         requirement: String = "", documents: [String] = [], prdBytes: Int? = nil,
-        validationPassed: Bool? = nil, errorCode: String? = nil, errorMessage: String? = nil
+        validationPassed: Bool? = nil, errorCode: String? = nil, errorMessage: String? = nil,
+        inputSaved: Bool = false, retriedFrom: String? = nil, retriedAs: String? = nil
     ) {
         self.taskId = taskId
         self.state = state
@@ -33,6 +38,9 @@ public struct TaskStatus: Sendable, Equatable, Identifiable {
         self.validationPassed = validationPassed
         self.errorCode = errorCode
         self.errorMessage = errorMessage
+        self.inputSaved = inputSaved
+        self.retriedFrom = retriedFrom
+        self.retriedAs = retriedAs
     }
 
     static func parse(_ object: [String: Any]?) -> TaskStatus? {
@@ -48,8 +56,29 @@ public struct TaskStatus: Sendable, Equatable, Identifiable {
             prdBytes: (object["prd_bytes"] as? NSNumber)?.intValue,
             validationPassed: object["validation_passed"] as? Bool,
             errorCode: error?["code"] as? String,
-            errorMessage: error?["message"] as? String
+            errorMessage: error?["message"] as? String,
+            inputSaved: object["input_saved"] as? Bool ?? false,
+            retriedFrom: object["retried_from"] as? String,
+            retriedAs: object["retried_as"] as? String
         )
+    }
+
+    public enum RetryOption: Sendable, Equatable {
+        /// Show the retry button.
+        case retry
+        /// Created before the server saved inputs: attach again and ask in chat.
+        case reattach
+        /// Not failed, already retried, or the same input would fail the same way.
+        case none
+    }
+
+    /// Codes for which the server refuses a retry.
+    public static let notRetryableCodes: Set<String> = ["INVALID_DOCUMENTS", "NEEDS_CLARIFICATION"]
+
+    public var retryOption: RetryOption {
+        guard state == .failed, retriedAs == nil else { return .none }
+        if let errorCode, Self.notRetryableCodes.contains(errorCode) { return .none }
+        return inputSaved ? .retry : .reattach
     }
 
     /// What went wrong, in Chinese, for a failed task.
@@ -57,11 +86,13 @@ public struct TaskStatus: Sendable, Equatable, Identifiable {
         guard state == .failed else { return nil }
         let detail = errorMessage.map { "：\($0)" } ?? ""
         switch errorCode {
-        case "GENERATION_FAILED": return "生成失败，可以稍后重试。"
+        // What to do next is shown under the text: a retry button or a hint.
+        case "GENERATION_FAILED": return "生成失败。"
         case "INVALID_DOCUMENTS": return "附件不符合要求\(detail)"
-        case "DOCUMENT_INDEXING_TIMEOUT": return "附件建索引超时，可以稍后重试。"
+        case "DOCUMENT_INDEXING_TIMEOUT": return "附件建索引超时。"
         case "DOCUMENT_INDEXING_FAILED": return "附件建索引失败\(detail)"
-        case "JOB_LOST": return "任务超过 45 分钟没有结果，已视为中断，请重新生成。"
+        case "JOB_LOST": return "任务超过 45 分钟没有结果，已视为中断。"
+        case "NEEDS_CLARIFICATION": return "需求还缺信息，请在对话里补充后再让我生成。"
         case let code?: return "生成没有完成（\(code)）\(detail)"
         case nil: return "生成失败。"
         }
@@ -132,6 +163,8 @@ public struct ServerError: Sendable, Equatable, LocalizedError {
         case "INVALID_DOCUMENTS": "附件不符合要求：\(message)"
         case "INTERNAL_ERROR": "服务端出错了，请稍后再试。"
         case "NOT_FOUND": "没有找到：\(message)"
+        case "TASK_RUNNING": "这个会话里还有 PRD 正在生成，等它结束后再删。"
+        case "NOT_RETRYABLE": "这个任务现在不能重试，请重新载入会话后再看。"
         default: "\(code)：\(message)"
         }
     }
@@ -144,11 +177,13 @@ public enum ServerEvent: Sendable, Equatable {
     case taskStarted(TaskStatus)
     case done
     case error(ServerError)
-    case sessions([SessionSummary])
+    /// `deletedIds`: sessions this user deleted, possibly on another device.
+    case sessions([SessionSummary], deletedIds: [String] = [])
     case history([HistoryMessage])
     case memories([MemoryRecord])
     case taskStatus(TaskStatus)
     case taskResult(TaskStatus, markdown: String)
+    case sessionDeleted(String)
 }
 
 public enum SSEParser {
@@ -187,7 +222,7 @@ public enum SSEParser {
             return .sessions(items.compactMap { item in
                 guard let id = item["session_id"] as? String else { return nil }
                 return SessionSummary(sessionId: id, createdAt: ISODate.parse(item["created_at"] as? String))
-            })
+            }, deletedIds: object["deleted_session_ids"] as? [String] ?? [])
         case "history":
             let items = object["messages"] as? [[String: Any]] ?? []
             return .history(items.compactMap { item in
@@ -208,6 +243,9 @@ public enum SSEParser {
                   let markdown = object["prd_markdown"] as? String
             else { throw RuntimeClientError.malformedEvent }
             return .taskResult(task, markdown: markdown)
+        case "session_deleted":
+            guard let id = object["session_id"] as? String else { throw RuntimeClientError.malformedEvent }
+            return .sessionDeleted(id)
         default:
             return nil
         }
@@ -270,6 +308,10 @@ public enum Transcript {
         }
         if text.hasPrefix("PRD generation for task ") {
             return "PRD 生成没有完成（\(taskId)）"
+        }
+        let ids = taskIds(in: text)
+        if text.hasPrefix("PRD task "), text.contains(" was retried as task "), ids.count == 2 {
+            return "已用原来的需求和附件重试（\(ids[0]) → \(ids[1])）"
         }
         return nil
     }

@@ -61,6 +61,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var memories: [MemoryRecord] = []
     @Published private(set) var memoriesLoading = false
     @Published private(set) var memoriesError: String?
+    @Published private(set) var deletingSessionId: String?
+    @Published private(set) var retryingTaskIds: Set<String> = []
 
     private var taskSessions: [String: String] = [:]
     private var serverSessions: [SessionSummary] = []
@@ -333,7 +335,12 @@ final class AppModel: ObservableObject {
         guard authPhase == .signedIn, let utility = index.utilitySessionId else { return }
         do {
             switch try await call(try RuntimePayload.action("list_sessions"), sessionId: utility) {
-            case .sessions(let list): rebuildSessions(server: list)
+            case .sessions(let list, let deleted):
+                // Deleted on another device (or a delete whose reply was lost).
+                for id in deleted where index.sessions[id] != nil && sendingSessionId != id {
+                    forgetSession(id)
+                }
+                rebuildSessions(server: list)
             case .error(let error): banner = "会话列表没取到：\(error.localizedDescription)"
             default: break
             }
@@ -415,6 +422,49 @@ final class AppModel: ObservableObject {
         index.sessions[sessionId]?.createdAt
             ?? serverSessions.first { $0.sessionId == sessionId }?.createdAt
             ?? Date()
+    }
+
+    // MARK: Deleting a session
+
+    /// The server deletes the conversation, its summaries and its PRD results,
+    /// and refuses while a task runs. Deleting is idempotent, so the read
+    /// path's retries are safe here too.
+    func deleteSession(_ id: String) async {
+        guard deletingSessionId == nil else { return }
+        guard sendingSessionId != id else {
+            banner = "这个会话正在回复，等回复结束后再删。"
+            return
+        }
+        deletingSessionId = id
+        banner = nil // an earlier attempt's error no longer applies
+        defer { deletingSessionId = nil }
+        do {
+            switch try await call(try RuntimePayload.action("delete_session"), sessionId: id) {
+            case .sessionDeleted:
+                forgetSession(id)
+            case .error(let error):
+                banner = "会话没删掉：\(error.localizedDescription)"
+            default:
+                banner = "会话没删掉：服务端的回复不对。"
+            }
+        } catch {
+            if authPhase == .signedIn { banner = "会话没删掉：\(error.localizedDescription)" }
+        }
+    }
+
+    private func forgetSession(_ id: String) {
+        if selectedSessionId == id { newSession() }
+        for (taskId, sessionId) in taskSessions where sessionId == id {
+            taskSessions.removeValue(forKey: taskId)
+            tasks.removeValue(forKey: taskId)
+            prdCache.removeValue(forKey: taskId)
+        }
+        transcripts.removeValue(forKey: id)
+        attachmentsBySession.removeValue(forKey: id)
+        serverSessions.removeAll { $0.sessionId == id }
+        index.removeSession(id)
+        saveIndex()
+        rebuildSessions(server: nil)
     }
 
     func newSession() {
@@ -662,6 +712,44 @@ final class AppModel: ObservableObject {
             }
         } catch {
             // The next poll tries again.
+        }
+    }
+
+    /// Reruns a failed task from the requirement and documents the server
+    /// saved; no message is sent and the model is not called.
+    func retryTask(_ taskId: String) async {
+        guard let sessionId = taskSessions[taskId], !retryingTaskIds.contains(taskId) else { return }
+        retryingTaskIds.insert(taskId)
+        banner = nil
+        defer { retryingTaskIds.remove(taskId) }
+        do {
+            let event = try await call(try RuntimePayload.action("retry_task", taskId: taskId), sessionId: sessionId)
+            switch event {
+            case .taskStarted(let status):
+                tasks[status.taskId] = status
+                taskSessions[status.taskId] = sessionId
+                remember(status.taskId, in: sessionId)
+                if transcripts[sessionId] != nil {
+                    transcripts[sessionId, default: []].append(ChatMessage(
+                        role: .notice,
+                        text: "已用原来的需求和附件重试（新任务 \(status.taskId)），进度见右侧「本次任务」"
+                    ))
+                }
+                await refreshTask(taskId, sessionId: sessionId) // now carries retried_as
+            case .error(let error):
+                await refreshTask(taskId, sessionId: sessionId)
+                // A resent request after a dropped connection finds the first
+                // one already accepted: show the new task instead of an error.
+                if let new = tasks[taskId]?.retriedAs {
+                    if tasks[new] == nil { await refreshTask(new, sessionId: sessionId) }
+                } else {
+                    banner = "没能重试：\(error.localizedDescription)"
+                }
+            default:
+                banner = "没能重试：服务端的回复不对。"
+            }
+        } catch {
+            if authPhase == .signedIn { banner = "没能重试：\(error.localizedDescription)" }
         }
     }
 
