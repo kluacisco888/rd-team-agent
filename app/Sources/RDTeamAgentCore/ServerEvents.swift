@@ -92,6 +92,34 @@ public struct MemoryRecord: Sendable, Equatable {
         default: kind
         }
     }
+
+    /// The record as a person should read it; `text` keeps the raw form.
+    public var displayText: String { MemoryText.clean(text) }
+}
+
+/// AgentCore's built-in strategies store records in machine formats: user
+/// preferences as JSON, summaries as `<topic name="…">` blocks of Markdown.
+public enum MemoryText {
+    public static func clean(_ raw: String, limit: Int = 280) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("{"),
+           let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+           let preference = object["preference"] as? String {
+            text = preference
+        }
+        text = text.replacing(#/<topic name="([^"]*)">/#) { "\($0.1)：" }
+            .replacingOccurrences(of: "</topic>", with: "")
+        let lines = text.components(separatedBy: .newlines).compactMap { line -> String? in
+            var line = line.trimmingCharacters(in: .whitespaces)
+            line = line.replacing(#/^#{1,6}\s*/#, with: "")
+            line = line.replacing(#/^[-*+]\s+/#, with: "")
+            line = line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+            return line.isEmpty ? nil : line
+        }
+        text = lines.joined(separator: " ")
+        text = text.replacing(#/\s{2,}/#, with: " ").replacingOccurrences(of: "： ", with: "：")
+        return text.count > limit ? String(text.prefix(limit)) + "…" : text
+    }
 }
 
 public struct ServerError: Sendable, Equatable, LocalizedError {

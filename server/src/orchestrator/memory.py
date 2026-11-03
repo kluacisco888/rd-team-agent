@@ -163,12 +163,20 @@ class ConversationMemory:
         query: str | None = None,
         kinds: tuple[str, ...] = ("preference", "fact", "summary"),
         limit: int = 20,
+        session_id: str | None = None,
     ) -> list[dict[str, str | None]]:
-        """Records under this caller's namespaces only; query=None lists them."""
+        """Records under this caller's namespaces only; query=None lists them.
+
+        With session_id, summaries come only from that session's namespace
+        (/strategy/{id}/actor/{actorId}/session/{sessionId}/); preferences and
+        facts belong to the user and are listed whatever the session.
+        """
 
         records = []
         for kind in kinds:
             namespace = self.namespace(self._strategies[kind], user_id)
+            if kind == "summary" and session_id is not None:
+                namespace += f"session/{session_id}/"
             if query:
                 page = self._client.retrieve_memory_records(
                     memoryId=self._memory_id,

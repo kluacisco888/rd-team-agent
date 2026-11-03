@@ -66,7 +66,7 @@ private struct TaskCard: View {
             case .running:
                 ProgressView().progressViewStyle(.linear)
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text("已用 \(Format.duration(context.date.timeIntervalSince(task.startedAt ?? context.date))) · 通常需要 6-10 分钟")
+                    Text("已用 \(Format.duration(context.date.timeIntervalSince(task.startedAt ?? context.date))) · 通常需要 6-15 分钟")
                         .font(.callout)
                         .monospacedDigit()
                 }
@@ -173,7 +173,7 @@ private struct MemorySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                SectionHeader(title: "我的长期记忆", detail: "按账号分开存，别人的会话里看不到。")
+                SectionHeader(title: "我的长期记忆", detail: "按账号分开存，别人看不到。偏好和事实跨会话通用；摘要只显示这个会话的。")
                 Spacer()
                 if model.memoriesLoading {
                     ProgressView().controlSize(.small)
@@ -198,7 +198,7 @@ private struct MemorySection: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
                         .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                    Text(record.text).font(.callout).textSelection(.enabled)
+                    Text(record.displayText).font(.callout).textSelection(.enabled)
                 }
             }
         }

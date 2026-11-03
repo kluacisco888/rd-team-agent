@@ -207,6 +207,27 @@ class MemoryTest(unittest.TestCase):
         records = memory(client).long_term(user_id=USER, kinds=("preference",))
         self.assertEqual([r["text"] for r in records], ["likes Given/When/Then"])
 
+    def test_summaries_are_limited_to_the_given_session(self) -> None:
+        client = FakeMemoryClient()
+        actor = ConversationMemory.namespace("sum", USER)
+        this_session = f"{actor}session/{SESSION}/"
+        client.records[this_session] = [
+            {"content": {"text": "this session"}, "namespaces": [this_session]},
+            {
+                "content": {"text": "other session"},
+                "namespaces": [f"{actor}session/{'x' * 40}/"],
+            },
+        ]
+        client.records[actor] = [
+            {"content": {"text": "any session"}, "namespaces": [actor]}
+        ]
+        scoped = memory(client).long_term(
+            user_id=USER, kinds=("summary",), session_id=SESSION
+        )
+        self.assertEqual([r["text"] for r in scoped], ["this session"])
+        unscoped = memory(client).long_term(user_id=USER, kinds=("summary",))
+        self.assertEqual([r["text"] for r in unscoped], ["any session"])
+
     def test_sessions_filters_other_actors(self) -> None:
         client = FakeMemoryClient()
         client.sessions = [

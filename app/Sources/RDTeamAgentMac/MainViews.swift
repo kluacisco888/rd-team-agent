@@ -9,7 +9,24 @@ struct RootView: View {
         switch model.authPhase {
         case .signedIn: MainView()
         case .signedOut, .signingIn: LoginView()
+        case .restoring: RestoringView()
         }
+    }
+}
+
+struct RestoringView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("正在恢复登录…")
+            Text("如果系统弹窗询问能否使用钥匙串里的登录令牌，选「允许」即可；选「拒绝」会回到登录页。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

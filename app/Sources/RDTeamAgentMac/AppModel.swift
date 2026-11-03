@@ -23,7 +23,7 @@ struct SessionItem: Identifiable, Equatable {
 /// All UI state. Lives on the main actor; network work runs inside URLSession.
 @MainActor
 final class AppModel: ObservableObject {
-    enum AuthPhase: Equatable { case signedOut, signingIn, signedIn }
+    enum AuthPhase: Equatable { case restoring, signedOut, signingIn, signedIn }
 
     static let maxMessageCharacters = 20_000
     static let pollInterval: UInt64 = 20_000_000_000
@@ -33,7 +33,7 @@ final class AppModel: ObservableObject {
     // MARK: Connection and sign-in
 
     @Published private(set) var config: AppConfig
-    @Published private(set) var authPhase: AuthPhase = .signedOut
+    @Published private(set) var authPhase: AuthPhase = .restoring
     @Published private(set) var identity: UserIdentity?
     @Published var authMessage: String?
     @Published var banner: String?
@@ -75,10 +75,28 @@ final class AppModel: ObservableObject {
 
     init() {
         config = Self.loadConfig()
-        if let saved = try? tokenStore.load() {
-            tokens = saved
-            Task { await resumeSignIn() }
+        Task { await restoreSignIn() }
+    }
+
+    /// Keychain calls can block for as long as macOS shows its access prompt
+    /// (an ad-hoc signed build gets a new signature every time it is rebuilt),
+    /// so they never run on the main actor and the window shows meanwhile.
+    private func restoreSignIn() async {
+        let store = tokenStore
+        let saved = await Task.detached(priority: .userInitiated) { try? store.load() }.value
+        guard authPhase == .restoring else { return }
+        guard let saved else {
+            authPhase = .signedOut
+            return
         }
+        tokens = saved
+        await resumeSignIn()
+        if authPhase == .restoring { authPhase = .signedOut }
+    }
+
+    private func saveTokens(_ tokens: TokenSet) async throws {
+        let store = tokenStore
+        try await Task.detached(priority: .userInitiated) { try store.save(tokens) }.value
     }
 
     // MARK: Derived state for the views
@@ -188,7 +206,7 @@ final class AppModel: ObservableObject {
             guard let callback else { throw AuthError.missingCode }
             let code = try CognitoAuth.authorizationCode(from: callback, expectedState: pkce.state)
             let fresh = try await tokenClient.exchange(code: code, pkce: pkce, config: config)
-            try tokenStore.save(fresh)
+            try await saveTokens(fresh)
             activate(fresh)
         } catch AuthError.cancelled {
             authPhase = .signedOut
@@ -244,7 +262,8 @@ final class AppModel: ObservableObject {
             let config = config
             Task { await client.revoke(refreshToken: refreshToken, config: config) }
         }
-        try? tokenStore.delete()
+        let store = tokenStore
+        Task.detached { try? store.delete() }
         authPhase = .signedOut
         pollTask?.cancel()
         pollTask = nil
@@ -281,7 +300,7 @@ final class AppModel: ObservableObject {
         do {
             let fresh = try await task.value
             tokens = fresh
-            try? tokenStore.save(fresh)
+            try? await saveTokens(fresh)
             return fresh.accessToken
         } catch AuthError.sessionExpired {
             signOut(message: AuthError.sessionExpired.errorDescription)
@@ -346,7 +365,9 @@ final class AppModel: ObservableObject {
 
     private func selectionChanged() {
         attachmentError = nil
-        guard authPhase == .signedIn, let id = selectedSessionId, transcripts[id] == nil else { return }
+        guard authPhase == .signedIn else { return }
+        Task { await refreshMemories() }
+        guard let id = selectedSessionId, transcripts[id] == nil else { return }
         Task { await loadSession(id) }
     }
 
@@ -672,12 +693,19 @@ final class AppModel: ObservableObject {
 
     // MARK: Long-term memory
 
+    /// Preferences and facts belong to the user; the Runtime adds summaries
+    /// only for the session the request names, so the selected session is used
+    /// (a new conversation asks through the utility session, which has none).
     func refreshMemories() async {
         guard authPhase == .signedIn, let utility = index.utilitySessionId else { return }
+        let key = currentKey
+        let sessionId = selectedSessionId ?? utility
         memoriesLoading = true
         defer { memoriesLoading = false }
         do {
-            switch try await call(try RuntimePayload.action("list_memories"), sessionId: utility) {
+            let event = try await call(try RuntimePayload.action("list_memories"), sessionId: sessionId)
+            guard key == currentKey else { return } // the user moved on to another session
+            switch event {
             case .memories(let records):
                 memories = records
                 memoriesError = nil
@@ -687,7 +715,7 @@ final class AppModel: ObservableObject {
                 break
             }
         } catch {
-            if authPhase == .signedIn { memoriesError = error.localizedDescription }
+            if authPhase == .signedIn, key == currentKey { memoriesError = error.localizedDescription }
         }
     }
 }

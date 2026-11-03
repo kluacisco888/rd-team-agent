@@ -73,6 +73,31 @@ import Testing
     }
 }
 
+@Suite struct MemoryTextTests {
+    @Test func preferenceJSONShowsOnlyThePreference() {
+        let raw = #"{"context":"管理后台功能文档生成","preference":"没有阻塞性问题就直接生成","categories":["文档生成"]}"#
+        #expect(MemoryText.clean(raw) == "没有阻塞性问题就直接生成")
+    }
+
+    @Test func summaryTopicAndMarkdownAreFlattened() {
+        let raw = """
+        <topic name="PRD 生成任务">
+        ## 任务概述
+        - **任务 ID**：`task-1`
+        - 状态：已完成
+        </topic>
+        """
+        #expect(MemoryText.clean(raw) == "PRD 生成任务：任务概述 任务 ID：task-1 状态：已完成")
+    }
+
+    @Test func plainTextIsKeptAndLongTextIsCut() {
+        #expect(MemoryText.clean("  用户偏好 Given/When/Then  ") == "用户偏好 Given/When/Then")
+        #expect(MemoryText.clean("{not json") == "{not json")
+        #expect(MemoryText.clean(String(repeating: "字", count: 300), limit: 10) == String(repeating: "字", count: 10) + "…")
+        #expect(MemoryRecord(kind: "fact", text: "**粗体**", createdAt: nil).displayText == "粗体")
+    }
+}
+
 @Suite struct ISODateTests {
     @Test func parsesMicrosecondsAndOffsets() throws {
         let date = try #require(ISODate.parse("2026-11-02T12:41:18.863055+00:00"))

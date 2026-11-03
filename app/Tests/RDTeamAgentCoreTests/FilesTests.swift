@@ -110,10 +110,16 @@ private func makePDF(in folder: URL, name: String, text: String?) throws -> URL 
         #expect(store.load() == index)
     }
 
-    @Test func titleIsTheShortenedFirstLine() {
+    @Test func titlePrefersAQuotedFeatureName() {
+        #expect(LocalIndex.title(fromMessage: "请根据附件，为管理后台写一份「CSV 批量导入用户」的 PRD。") == "CSV 批量导入用户")
+        #expect(LocalIndex.title(fromMessage: "写一份“导出 Excel”的需求") == "导出 Excel")
+    }
+
+    @Test func titleFallsBackToTheShortenedFirstClause() {
         #expect(LocalIndex.title(fromMessage: "写一份 PRD\n细节") == "写一份 PRD")
+        #expect(LocalIndex.title(fromMessage: "帮我写导出功能的 PRD，背景在附件里") == "帮我写导出功能的 PRD")
         let long = String(repeating: "长", count: 40)
-        #expect(LocalIndex.title(fromMessage: long) == String(repeating: "长", count: 30) + "…")
+        #expect(LocalIndex.title(fromMessage: long) == String(repeating: "长", count: 20) + "…")
     }
 
     @Test func prdFileNamesAreSafeAndNeverOverwrite() throws {

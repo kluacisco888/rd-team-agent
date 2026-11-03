@@ -137,7 +137,9 @@ class OrchestratorHandler:
                 yield {"event": "history", "messages": messages}
             elif action == "list_memories":
                 records = await asyncio.to_thread(
-                    self._memory.long_term, user_id=caller.user_id
+                    self._memory.long_term,
+                    user_id=caller.user_id,
+                    session_id=session_id,
                 )
                 yield {"event": "memories", "records": records}
             elif action in {"task_status", "task_result"}:

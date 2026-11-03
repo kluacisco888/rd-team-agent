@@ -28,11 +28,18 @@ public struct LocalIndex: Codable, Sendable, Equatable {
         self.utilitySessionId = utilitySessionId
     }
 
-    /// The first line of the first message, shortened for the session list.
+    /// A short title for the session list and PRD file names: a quoted feature
+    /// name such as 「CSV 批量导入用户」 if the first message has one, otherwise
+    /// its first clause, at most 20 characters.
     public static func title(fromMessage message: String) -> String {
-        let line = message.split(whereSeparator: \.isNewline).first.map(String.init) ?? message
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return trimmed.count > 30 ? String(trimmed.prefix(30)) + "…" : trimmed
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let quoted = text.firstMatch(of: #/[「“"《]([^」”"》\n]{2,30})[」”"》]/#) {
+            let name = String(quoted.1).trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty { return name }
+        }
+        let clause = text.split(whereSeparator: { "，,。！？!?；;\n".contains($0) }).first.map(String.init) ?? text
+        let trimmed = clause.trimmingCharacters(in: .whitespaces)
+        return trimmed.count > 20 ? String(trimmed.prefix(20)) + "…" : trimmed
     }
 }
 
