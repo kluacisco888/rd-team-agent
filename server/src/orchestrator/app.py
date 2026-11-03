@@ -4,6 +4,8 @@ Payload actions:
 - chat: {"action": "chat", "message": str, "documents": [{"path", "content"}]}
 - list_sessions / history / list_memories: no model call
 - task_status / task_result: {"task_id": str}; no model call
+- retry_task: {"task_id": str}; reruns a failed task's saved input, no model call
+- delete_session: deletes this session's conversation, summaries and results
 
 The caller is always the verified token's subject; the session is the Runtime
 session ID header. Nothing in the payload can name another user.
@@ -35,9 +37,10 @@ from orchestrator.identity import (
     CognitoAccessTokenVerifier,
     authorization_header,
 )
-from orchestrator.jobs import PrdJobRunner
+from orchestrator.jobs import JobRejected, PrdJobRunner
 from orchestrator.memory import ConversationMemory
 from orchestrator.results import SESSION_ID_PATTERN, ResultStore
+from orchestrator.sessions import SessionBusy, SessionManager
 from orchestrator.settings import OrchestratorSettings
 from prd_agent.application import JsonContractProvider
 from prd_agent.contracts import (
@@ -93,12 +96,14 @@ class OrchestratorHandler:
         verifier: CognitoAccessTokenVerifier,
         memory: ConversationMemory,
         jobs: PrdJobRunner,
+        sessions: SessionManager,
         agent_factory: AgentFactory,
         history_turns: int,
     ) -> None:
         self._verifier = verifier
         self._memory = memory
         self._jobs = jobs
+        self._sessions = sessions
         self._agent_factory = agent_factory
         self._history_turns = history_turns
 
@@ -126,10 +131,14 @@ class OrchestratorHandler:
                 async for event in self._chat(caller, session_id, payload):
                     yield event
             elif action == "list_sessions":
-                sessions = await asyncio.to_thread(
-                    self._memory.sessions, user_id=caller.user_id
-                )
+                sessions = await asyncio.to_thread(self._sessions.list, caller=caller)
                 yield {"event": "sessions", "sessions": sessions}
+            elif action == "delete_session":
+                async for event in self._delete_session(caller, session_id):
+                    yield event
+            elif action == "retry_task":
+                async for event in self._retry(caller, session_id, payload):
+                    yield event
             elif action == "history":
                 messages = await asyncio.to_thread(
                     self._memory.messages, user_id=caller.user_id, session_id=session_id
@@ -181,6 +190,48 @@ class OrchestratorHandler:
             yield _error("NOT_FOUND", "the PRD object is missing")
             return
         yield {"event": "task_result", "task": status, "prd_markdown": markdown}
+
+    async def _retry(
+        self, caller: Caller, session_id: str, payload: dict
+    ) -> AsyncIterator[dict[str, Any]]:
+        task_id = payload.get("task_id")
+        if not isinstance(task_id, str):
+            yield _error("INVALID_REQUEST", "task_id is required")
+            return
+        try:
+            status = await asyncio.to_thread(
+                self._jobs.retry,
+                caller=caller,
+                session_id=session_id,
+                task_id=task_id,
+                loop=asyncio.get_running_loop(),
+            )
+        except JobRejected as rejected:
+            yield _error("NOT_RETRYABLE", str(rejected))
+            return
+        except ValueError:
+            yield _error("INVALID_REQUEST", "task_id is malformed")
+            return
+        if status is None:
+            yield _error("NOT_FOUND", "no such task in this session")
+            return
+        yield {"event": "task_started", "task": status}
+
+    async def _delete_session(
+        self, caller: Caller, session_id: str
+    ) -> AsyncIterator[dict[str, Any]]:
+        try:
+            deleted = await asyncio.to_thread(
+                self._sessions.delete, caller=caller, session_id=session_id
+            )
+        except SessionBusy as busy:
+            yield _error(
+                "TASK_RUNNING",
+                "a PRD task in this session is still running: "
+                + ", ".join(busy.task_ids),
+            )
+            return
+        yield {"event": "session_deleted", "session_id": session_id, "deleted": deleted}
 
     async def _chat(
         self, caller: Caller, session_id: str, payload: dict
@@ -317,26 +368,29 @@ def build_orchestrator_app(settings: OrchestratorSettings) -> BedrockAgentCoreAp
         semantic_strategy_id=settings.semantic_strategy_id,
         summary_strategy_id=settings.summary_strategy_id,
     )
+    store = ResultStore(
+        client=aws.client("s3", config=_AWS_CLIENT_CONFIG),
+        bucket=settings.results_bucket,
+        expected_owner=settings.aws_account_id,
+    )
+    jobs = PrdJobRunner(
+        service=service,
+        store=store,
+        memory=memory,
+        busy=app,
+        project_id=settings.project_id,
+        repository=settings.repository_name,
+        repository_commit=settings.repository_commit,
+        prd_contract_version=settings.prd_contract_version,
+    )
     handler = OrchestratorHandler(
         verifier=CognitoAccessTokenVerifier(
             issuer=settings.cognito_issuer,
             allowed_client_ids=settings.allowed_client_ids,
         ),
         memory=memory,
-        jobs=PrdJobRunner(
-            service=service,
-            store=ResultStore(
-                client=aws.client("s3", config=_AWS_CLIENT_CONFIG),
-                bucket=settings.results_bucket,
-                expected_owner=settings.aws_account_id,
-            ),
-            memory=memory,
-            busy=app,
-            project_id=settings.project_id,
-            repository=settings.repository_name,
-            repository_commit=settings.repository_commit,
-            prd_contract_version=settings.prd_contract_version,
-        ),
+        jobs=jobs,
+        sessions=SessionManager(memory=memory, jobs=jobs, store=store),
         agent_factory=bedrock_agent_factory(
             model_id=settings.model_id,
             region=settings.aws_region,

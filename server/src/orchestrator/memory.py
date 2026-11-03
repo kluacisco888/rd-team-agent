@@ -9,6 +9,7 @@ from typing import Any
 from botocore.exceptions import ClientError
 
 MAX_EVENT_TEXT = 90_000  # one event payload must stay under the 100 KB message limit
+RECORD_DELETE_BATCH = 100  # the BatchDeleteMemoryRecords limit
 
 
 def _clip(text: str) -> str:
@@ -155,6 +156,83 @@ class ConversationMemory:
                 raise
             return []
         return sorted(items, key=lambda item: item["created_at"] or "", reverse=True)
+
+    def delete_events(self, *, user_id: str, session_id: str) -> int:
+        """Delete every event of this caller's session; returns how many.
+
+        Memory has no session delete, and ListSessions keeps listing a session
+        whose events are all gone, so callers hide it separately.
+        """
+
+        try:
+            events = list(
+                _pages(
+                    self._client.list_events,
+                    "events",
+                    memoryId=self._memory_id,
+                    actorId=user_id,
+                    sessionId=session_id,
+                    includePayloads=False,
+                    maxResults=100,
+                )
+            )
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") != (
+                "ResourceNotFoundException"
+            ):
+                raise
+            return 0
+        for event in events:
+            self._client.delete_event(
+                memoryId=self._memory_id,
+                actorId=user_id,
+                sessionId=session_id,
+                eventId=event["eventId"],
+            )
+        return len(events)
+
+    def delete_session_summaries(self, *, user_id: str, session_id: str) -> int:
+        """Delete the summary records of this caller's session; returns how many.
+
+        Preferences and facts belong to the user, not the session, and stay.
+        """
+
+        namespace = (
+            self.namespace(self._strategies["summary"], user_id)
+            + f"session/{session_id}/"
+        )
+        records = [
+            item
+            for item in _pages(
+                self._client.list_memory_records,
+                "memoryRecordSummaries",
+                memoryId=self._memory_id,
+                namespace=namespace,
+                maxResults=100,
+            )
+            if all(
+                ns.startswith(namespace) for ns in item.get("namespaces", [namespace])
+            )
+        ]
+        for start in range(0, len(records), RECORD_DELETE_BATCH):
+            batch = records[start : start + RECORD_DELETE_BATCH]
+            response = self._client.batch_delete_memory_records(
+                memoryId=self._memory_id,
+                records=[
+                    {
+                        "memoryRecordId": item["memoryRecordId"],
+                        "namespace": (item.get("namespaces") or [namespace])[0],
+                    }
+                    for item in batch
+                ],
+            )
+            failed = response.get("failedRecords") or []
+            if failed:
+                codes = sorted({item.get("errorCode") or "?" for item in failed})
+                raise RuntimeError(
+                    f"{len(failed)} summary record(s) were not deleted: {codes}"
+                )
+        return len(records)
 
     def long_term(
         self,

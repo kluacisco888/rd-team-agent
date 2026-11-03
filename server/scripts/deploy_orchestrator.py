@@ -150,9 +150,10 @@ def runtime_policy(
                 "Resource": f"arn:aws:s3:::{names.bucket}/runtime/*",
             },
             {
+                # DeleteObject: deleting a session removes its PRD results.
                 "Sid": "ReadWriteOwnResults",
                 "Effect": "Allow",
-                "Action": ["s3:GetObject", "s3:PutObject"],
+                "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
                 "Resource": f"arn:aws:s3:::{names.bucket}/results/*",
             },
             {
@@ -183,15 +184,19 @@ def runtime_policy(
                 "Resource": kb_arn,
             },
             {
+                # The two deletes serve session deletion: its events and the
+                # summary records under its session namespace.
                 "Sid": "UseMemory",
                 "Effect": "Allow",
                 "Action": [
                     "bedrock-agentcore:CreateEvent",
                     "bedrock-agentcore:GetEvent",
                     "bedrock-agentcore:ListEvents",
+                    "bedrock-agentcore:DeleteEvent",
                     "bedrock-agentcore:ListSessions",
                     "bedrock-agentcore:ListMemoryRecords",
                     "bedrock-agentcore:RetrieveMemoryRecords",
+                    "bedrock-agentcore:BatchDeleteMemoryRecords",
                 ],
                 "Resource": memory_arn,
             },

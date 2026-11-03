@@ -22,7 +22,8 @@ from orchestrator.identity import (
 )
 from orchestrator.jobs import JobRejected, PrdJobRunner
 from orchestrator.memory import ConversationMemory
-from orchestrator.results import ResultStore, result_key
+from orchestrator.results import ResultStore, result_key, tombstone_key
+from orchestrator.sessions import SessionManager
 from orchestrator.settings import REQUIRED_ENVIRONMENT_KEYS, load_orchestrator_settings
 from prd_agent.contracts import GenerationResult, RunStatus, TaskDocument, VersionSet
 
@@ -131,10 +132,37 @@ class FakeMemoryClient:
         self.events: list[dict] = []
         self.records: dict[str, list[dict]] = {}
         self.sessions: list[dict] = []
+        self.failed_record_ids: set[str] = set()
 
     def create_event(self, **kwargs: Any) -> dict:
-        self.events.append(kwargs)
+        self.events.append({**kwargs, "eventId": f"event-{len(self.events)}"})
         return {}
+
+    def delete_event(self, **kwargs: Any) -> dict:
+        self.events = [
+            e
+            for e in self.events
+            if (e["actorId"], e["sessionId"], e["eventId"])
+            != (kwargs["actorId"], kwargs["sessionId"], kwargs["eventId"])
+        ]
+        return {}
+
+    def batch_delete_memory_records(self, **kwargs: Any) -> dict:
+        assert len(kwargs["records"]) <= 100
+        failed = []
+        for entry in kwargs["records"]:
+            if entry["memoryRecordId"] in self.failed_record_ids:
+                failed.append(
+                    {"memoryRecordId": entry["memoryRecordId"], "errorCode": "500"}
+                )
+                continue
+            kept = [
+                r
+                for r in self.records.get(entry["namespace"], [])
+                if r["memoryRecordId"] != entry["memoryRecordId"]
+            ]
+            self.records[entry["namespace"]] = kept
+        return {"successfulRecords": [], "failedRecords": failed}
 
     def list_events(self, **kwargs: Any) -> dict:
         return {
@@ -265,6 +293,60 @@ class MemoryTest(unittest.TestCase):
         with self.assertRaises(ClientError):
             memory(client).sessions(user_id=USER)
 
+    def test_delete_events_only_touches_this_callers_session(self) -> None:
+        client = FakeMemoryClient()
+        store = memory(client)
+        for user, session in ((USER, SESSION), (USER, SESSION), (USER, "t" * 40)):
+            store.record(user_id=user, session_id=session, turns=[("USER", "hi")])
+        store.record(user_id=OTHER, session_id=SESSION, turns=[("USER", "hi")])
+        self.assertEqual(store.delete_events(user_id=USER, session_id=SESSION), 2)
+        self.assertEqual(store.messages(user_id=USER, session_id=SESSION), [])
+        self.assertEqual(len(store.messages(user_id=USER, session_id="t" * 40)), 1)
+        self.assertEqual(len(store.messages(user_id=OTHER, session_id=SESSION)), 1)
+
+    def test_delete_events_of_unknown_session_is_zero(self) -> None:
+        client = FakeMemoryClient()
+
+        def unknown(**kwargs: Any) -> dict:
+            raise ClientError({"Error": {"Code": "ResourceNotFoundException"}}, "X")
+
+        client.list_events = unknown
+        self.assertEqual(
+            memory(client).delete_events(user_id=USER, session_id=SESSION), 0
+        )
+
+    def test_delete_session_summaries_keeps_other_sessions_and_kinds(self) -> None:
+        client = FakeMemoryClient()
+        actor = ConversationMemory.namespace("sum", USER)
+        this_session = f"{actor}session/{SESSION}/"
+        other_session = f"{actor}session/{'t' * 40}/"
+        prefs = ConversationMemory.namespace("pref", USER)
+        client.records = {
+            this_session: [
+                {"memoryRecordId": f"r{i}", "namespaces": [this_session]}
+                for i in range(150)
+            ],
+            other_session: [{"memoryRecordId": "o", "namespaces": [other_session]}],
+            prefs: [{"memoryRecordId": "p", "namespaces": [prefs]}],
+        }
+        deleted = memory(client).delete_session_summaries(
+            user_id=USER, session_id=SESSION
+        )
+        self.assertEqual(deleted, 150)
+        self.assertEqual(client.records[this_session], [])
+        self.assertEqual(len(client.records[other_session]), 1)
+        self.assertEqual(len(client.records[prefs]), 1)
+
+    def test_delete_session_summaries_reports_failures(self) -> None:
+        client = FakeMemoryClient()
+        namespace = f"{ConversationMemory.namespace('sum', USER)}session/{SESSION}/"
+        client.records[namespace] = [
+            {"memoryRecordId": "r1", "namespaces": [namespace]}
+        ]
+        client.failed_record_ids = {"r1"}
+        with self.assertRaisesRegex(RuntimeError, "1 summary record"):
+            memory(client).delete_session_summaries(user_id=USER, session_id=SESSION)
+
 
 class ResultKeyTest(unittest.TestCase):
     def test_valid_key(self) -> None:
@@ -283,10 +365,60 @@ class ResultKeyTest(unittest.TestCase):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 result_key(*args)
 
+    def test_tombstone_key_is_outside_every_session_prefix(self) -> None:
+        self.assertEqual(
+            tombstone_key(USER, SESSION), f"results/{USER}/_deleted/{SESSION}"
+        )
+        for args in (("../x", SESSION), (USER, "_deleted"), (USER, "a/b" * 20)):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                tombstone_key(*args)
+
+
+class ResultStoreTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.s3 = FakeS3(page_size=2)
+        self.store = store(self.s3)
+        self.other_task = "task-" + "1" * 32
+        self.other_session = "t" * 40
+        for user, session, task in (
+            (USER, SESSION, TASK),
+            (USER, SESSION, self.other_task),
+            (USER, self.other_session, TASK),
+            (OTHER, SESSION, TASK),
+        ):
+            self.store.put_status(user, session, task, {"task_id": task})
+            self.store.put_request(user, session, task, {"requirement_text": "x"})
+        self.store.put_prd(USER, SESSION, TASK, "# PRD")
+
+    def test_task_ids_lists_only_this_session(self) -> None:
+        self.assertEqual(
+            sorted(self.store.task_ids(USER, SESSION)), [TASK, self.other_task]
+        )
+
+    def test_delete_session_removes_only_its_own_objects(self) -> None:
+        self.store.put_tombstone(USER, SESSION, "2026-11-03T00:00:00+00:00")
+        self.assertEqual(self.store.delete_session(USER, SESSION), 5)
+        self.assertEqual(self.store.task_ids(USER, SESSION), [])
+        self.assertEqual(self.store.task_ids(USER, self.other_session), [TASK])
+        self.assertEqual(self.store.task_ids(OTHER, SESSION), [TASK])
+        self.assertIn(tombstone_key(USER, SESSION), self.s3.objects)
+
+    def test_delete_session_reports_objects_left_behind(self) -> None:
+        self.s3.undeletable.add(result_key(USER, SESSION, TASK, "prd.md"))
+        with self.assertRaisesRegex(RuntimeError, "AccessDenied"):
+            self.store.delete_session(USER, SESSION)
+
+    def test_deleted_sessions_are_per_user(self) -> None:
+        self.store.put_tombstone(USER, SESSION, "2026-11-03T00:00:00+00:00")
+        self.assertEqual(self.store.deleted_sessions(USER), {SESSION})
+        self.assertEqual(self.store.deleted_sessions(OTHER), set())
+
 
 class FakeS3:
-    def __init__(self) -> None:
+    def __init__(self, page_size: int = 1000) -> None:
         self.objects: dict[str, bytes] = {}
+        self.page_size = page_size
+        self.undeletable: set[str] = set()
 
     def put_object(self, **kwargs: Any) -> dict:
         assert kwargs["ServerSideEncryption"] == "AES256"
@@ -297,6 +429,28 @@ class FakeS3:
         if kwargs["Key"] not in self.objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
         return {"Body": SimpleNamespace(read=lambda: self.objects[kwargs["Key"]])}
+
+    def list_objects_v2(self, **kwargs: Any) -> dict:
+        assert kwargs["ExpectedBucketOwner"]
+        keys = sorted(k for k in self.objects if k.startswith(kwargs["Prefix"]))
+        start = int(kwargs.get("ContinuationToken", 0))
+        page = keys[start : start + self.page_size]
+        more = start + self.page_size < len(keys)
+        return {
+            "Contents": [{"Key": key} for key in page],
+            "IsTruncated": more,
+            **({"NextContinuationToken": str(start + self.page_size)} if more else {}),
+        }
+
+    def delete_objects(self, **kwargs: Any) -> dict:
+        assert kwargs["ExpectedBucketOwner"]
+        errors = []
+        for item in kwargs["Delete"]["Objects"]:
+            if item["Key"] in self.undeletable:
+                errors.append({"Key": item["Key"], "Code": "AccessDenied"})
+            else:
+                self.objects.pop(item["Key"], None)
+        return {"Errors": errors} if errors else {}
 
 
 class FakeBusy:
@@ -340,16 +494,22 @@ DOC = [TaskDocument(path="spec.md", content="# Spec\nImport users from CSV.")]
 CALLER = Caller(user_id=USER, username="tester1", client_id="cli-client")
 
 
+def store(s3: FakeS3) -> ResultStore:
+    return ResultStore(client=s3, bucket="b", expected_owner="123456789012")
+
+
 def runner(
     service: FakeService,
     s3: FakeS3,
     client: FakeMemoryClient,
     busy: FakeBusy,
     clock=None,
+    task_ids: list[str] | None = None,
 ):
+    ids = iter(task_ids or [])
     return PrdJobRunner(
         service=service,
-        store=ResultStore(client=s3, bucket="b", expected_owner="123456789012"),
+        store=store(s3),
         memory=memory(client),
         busy=busy,
         project_id="demo",
@@ -357,8 +517,15 @@ def runner(
         repository_commit=COMMIT,
         prd_contract_version="v1",
         clock=clock or (lambda: datetime.now(UTC)),
-        task_id_factory=lambda: TASK,
+        task_id_factory=(lambda: next(ids)) if task_ids else (lambda: TASK),
     )
+
+
+async def settle(busy: FakeBusy) -> None:
+    for _ in range(100):
+        if not busy.active:
+            return
+        await asyncio.sleep(0.01)
 
 
 class JobsTest(unittest.IsolatedAsyncioTestCase):
@@ -442,6 +609,101 @@ class JobsTest(unittest.IsolatedAsyncioTestCase):
         )
         status = jobs.status(caller=CALLER, session_id=SESSION, task_id=TASK)
         self.assertEqual(status["error"]["code"], "JOB_LOST")
+        self.assertEqual(jobs.running_tasks(caller=CALLER, session_id=SESSION), [])
+
+    async def test_start_saves_the_full_input(self) -> None:
+        s3, busy = FakeS3(), FakeBusy()
+        jobs = runner(FakeService(RuntimeError("x")), s3, FakeMemoryClient(), busy)
+        status = await self._start_and_wait(jobs, busy)
+        self.assertTrue(status["input_saved"])
+        self.assertEqual(
+            store(s3).get_request(USER, SESSION, TASK),
+            {
+                "requirement_text": "Build CSV import",
+                "documents": [d.model_dump() for d in DOC],
+            },
+        )
+
+    async def test_retry_reruns_saved_input_and_links_both_tasks(self) -> None:
+        retried = "task-" + "1" * 32
+        s3, client, busy = FakeS3(), FakeMemoryClient(), FakeBusy()
+        service = FakeService(RuntimeError("model timeout"))
+        jobs = runner(service, s3, client, busy, task_ids=[TASK, retried])
+        await self._start_and_wait(jobs, busy)
+        loop = asyncio.get_running_loop()
+
+        status = jobs.retry(caller=CALLER, session_id=SESSION, task_id=TASK, loop=loop)
+        self.assertEqual(status["task_id"], retried)
+        self.assertEqual(status["retried_from"], TASK)
+        await settle(busy)
+        self.assertEqual(len(service.requests), 2)
+        self.assertEqual(service.requests[1].requirement_text, "Build CSV import")
+        self.assertEqual(service.requests[1].documents, DOC)
+        old = jobs.status(caller=CALLER, session_id=SESSION, task_id=TASK)
+        self.assertEqual(old["retried_as"], retried)
+        notes = [
+            e["payload"][0]["conversational"]["content"]["text"] for e in client.events
+        ]
+        self.assertTrue(any(f"retried as task {retried}" in n for n in notes))
+        with self.assertRaisesRegex(JobRejected, "already retried"):
+            jobs.retry(caller=CALLER, session_id=SESSION, task_id=TASK, loop=loop)
+        other = Caller(user_id=OTHER, username=None, client_id="cli-client")
+        self.assertIsNone(
+            jobs.retry(caller=other, session_id=SESSION, task_id=TASK, loop=loop)
+        )
+
+    async def test_retry_rejections(self) -> None:
+        s3 = FakeS3()
+        jobs = runner(FakeService(None), s3, FakeMemoryClient(), FakeBusy())
+        results = store(s3)
+        now = datetime.now(UTC).isoformat()
+        saved = {"requirement_text": "x", "documents": [d.model_dump() for d in DOC]}
+        cases = {
+            "running": ({"state": "running"}, saved, "Only a failed task"),
+            "succeeded": ({"state": "succeeded"}, saved, "Only a failed task"),
+            "bad documents": (
+                {"state": "failed", "error": {"code": "INVALID_DOCUMENTS"}},
+                saved,
+                "INVALID_DOCUMENTS",
+            ),
+            "needs answers": (
+                {"state": "failed", "error": {"code": "NEEDS_CLARIFICATION"}},
+                saved,
+                "NEEDS_CLARIFICATION",
+            ),
+            "input not saved": (
+                {"state": "failed", "error": {"code": "GENERATION_FAILED"}},
+                None,
+                "not saved",
+            ),
+            "input unreadable": (
+                {"state": "failed", "error": {"code": "GENERATION_FAILED"}},
+                {"documents": []},
+                "unreadable",
+            ),
+        }
+        for name, (state, request, message) in cases.items():
+            with self.subTest(name):
+                s3.objects.clear()
+                results.put_status(
+                    USER, SESSION, TASK, {"task_id": TASK, "started_at": now, **state}
+                )
+                if request is not None:
+                    results.put_request(USER, SESSION, TASK, request)
+                with self.assertRaisesRegex(JobRejected, message):
+                    jobs.retry(
+                        caller=CALLER,
+                        session_id=SESSION,
+                        task_id=TASK,
+                        loop=asyncio.get_running_loop(),
+                    )
+        with self.assertRaises(ValueError):
+            jobs.retry(
+                caller=CALLER,
+                session_id=SESSION,
+                task_id="task-../x",
+                loop=asyncio.get_running_loop(),
+            )
 
 
 class FakeAgent:
@@ -482,6 +744,9 @@ class HandlerTest(unittest.IsolatedAsyncioTestCase):
             verifier=verifier(),
             memory=memory(self.client),
             jobs=self.jobs,
+            sessions=SessionManager(
+                memory=memory(self.client), jobs=self.jobs, store=store(self.s3)
+            ),
             agent_factory=factory,
             history_turns=10,
         )
@@ -572,6 +837,129 @@ class HandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bad_doc[0]["error"]["code"], "INVALID_DOCUMENTS")
         unknown = await self.run_handler(handler, {"action": "drop_tables"})
         self.assertEqual(unknown[0]["error"]["code"], "INVALID_REQUEST")
+
+    def seed_session(self, user: str) -> None:
+        memory(self.client).record(
+            user_id=user,
+            session_id=SESSION,
+            turns=[("USER", "hi"), ("ASSISTANT", "yo")],
+        )
+        results = store(self.s3)
+        started = datetime.now(UTC).isoformat()
+        results.put_status(
+            user,
+            SESSION,
+            TASK,
+            {"task_id": TASK, "state": "succeeded", "started_at": started},
+        )
+        results.put_prd(user, SESSION, TASK, "# PRD")
+        namespace = f"{ConversationMemory.namespace('sum', user)}session/{SESSION}/"
+        self.client.records[namespace] = [
+            {"memoryRecordId": f"sum-{user}", "namespaces": [namespace]}
+        ]
+        self.client.sessions.append({"sessionId": SESSION, "actorId": user})
+
+    async def test_delete_session_removes_own_data_and_hides_it(self) -> None:
+        self.seed_session(USER)
+        self.seed_session(OTHER)
+        handler = self.handler()
+        events = await self.run_handler(handler, {"action": "delete_session"})
+        self.assertEqual(
+            events,
+            [
+                {
+                    "event": "session_deleted",
+                    "session_id": SESSION,
+                    "deleted": {"events": 1, "summaries": 1, "result_objects": 2},
+                }
+            ],
+        )
+        self.assertEqual(
+            memory(self.client).messages(user_id=USER, session_id=SESSION), []
+        )
+        listed = await self.run_handler(handler, {"action": "list_sessions"})
+        self.assertEqual(listed[0]["sessions"], [])
+        # The other user's copy of the same session ID is untouched.
+        self.assertEqual(
+            len(memory(self.client).messages(user_id=OTHER, session_id=SESSION)), 2
+        )
+        self.assertEqual(store(self.s3).task_ids(OTHER, SESSION), [TASK])
+        other = f"Bearer {token(sub=OTHER)}"
+        listed = await self.run_handler(
+            handler, {"action": "list_sessions"}, header=other
+        )
+        self.assertEqual([s["session_id"] for s in listed[0]["sessions"]], [SESSION])
+
+    async def test_delete_session_refuses_while_a_task_runs(self) -> None:
+        self.seed_session(USER)
+        store(self.s3).put_status(
+            USER,
+            SESSION,
+            TASK,
+            {
+                "task_id": TASK,
+                "state": "running",
+                "started_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        events = await self.run_handler(self.handler(), {"action": "delete_session"})
+        self.assertEqual(events[0]["error"]["code"], "TASK_RUNNING")
+        self.assertIn(TASK, events[0]["error"]["message"])
+        self.assertEqual(store(self.s3).deleted_sessions(USER), set())
+        self.assertEqual(
+            len(memory(self.client).messages(user_id=USER, session_id=SESSION)), 2
+        )
+
+    async def test_retry_task_actions(self) -> None:
+        retried = "task-" + "1" * 32
+        self.jobs = runner(
+            FakeService(RuntimeError("x")),
+            self.s3,
+            self.client,
+            self.busy,
+            task_ids=[retried],
+        )
+        handler = self.handler()
+        results = store(self.s3)
+        started = datetime.now(UTC).isoformat()
+        results.put_status(
+            USER,
+            SESSION,
+            TASK,
+            {
+                "task_id": TASK,
+                "state": "failed",
+                "started_at": started,
+                "error": {"code": "GENERATION_FAILED"},
+            },
+        )
+        not_saved = await self.run_handler(
+            handler, {"action": "retry_task", "task_id": TASK}
+        )
+        self.assertEqual(not_saved[0]["error"]["code"], "NOT_RETRYABLE")
+        results.put_request(
+            USER,
+            SESSION,
+            TASK,
+            {"requirement_text": "x", "documents": [d.model_dump() for d in DOC]},
+        )
+        events = await self.run_handler(
+            handler, {"action": "retry_task", "task_id": TASK}
+        )
+        self.assertEqual(events[0]["event"], "task_started")
+        self.assertEqual(events[0]["task"]["task_id"], retried)
+        await settle(self.busy)
+        other = f"Bearer {token(sub=OTHER)}"
+        missing = await self.run_handler(
+            handler, {"action": "retry_task", "task_id": TASK}, header=other
+        )
+        self.assertEqual(missing[0]["error"]["code"], "NOT_FOUND")
+        malformed = await self.run_handler(
+            handler, {"action": "retry_task", "task_id": "x"}
+        )
+        self.assertEqual(malformed[0]["error"]["code"], "INVALID_REQUEST")
+        absent = await self.run_handler(handler, {"action": "retry_task"})
+        self.assertEqual(absent[0]["error"]["code"], "INVALID_REQUEST")
 
 
 class PromptAndToolsTest(unittest.IsolatedAsyncioTestCase):

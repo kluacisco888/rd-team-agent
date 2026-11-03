@@ -14,7 +14,7 @@ from concurrent.futures import Future
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from orchestrator.identity import Caller
 from orchestrator.memory import ConversationMemory
@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 # A job whose session died never writes a final status; report it as lost.
 STALE_AFTER = timedelta(minutes=45)
+# Running these again with the same input gives the same answer: the documents
+# are rejected, or the requirement needs the user's answers first.
+NOT_RETRYABLE = frozenset({"INVALID_DOCUMENTS", "NEEDS_CLARIFICATION"})
+_DOCUMENTS = TypeAdapter(list[TaskDocument])
 
 
 class BusyTracker(Protocol):
@@ -83,6 +87,17 @@ class PrdJobRunner:
         documents: list[TaskDocument],
         loop: asyncio.AbstractEventLoop,
     ) -> dict[str, Any]:
+        return self._launch(caller, session_id, requirement_text, documents, loop)
+
+    def _launch(
+        self,
+        caller: Caller,
+        session_id: str,
+        requirement_text: str,
+        documents: list[TaskDocument],
+        loop: asyncio.AbstractEventLoop,
+        retried_from: str | None = None,
+    ) -> dict[str, Any]:
         if not documents:
             raise JobRejected(
                 "No attachment in this request. Ask the user to attach at least one "
@@ -104,13 +119,25 @@ class PrdJobRunner:
             ) from None
 
         task_id = self._task_id_factory()
+        self._store.put_request(
+            caller.user_id,
+            session_id,
+            task_id,
+            {
+                "requirement_text": requirement_text,
+                "documents": [document.model_dump() for document in documents],
+            },
+        )
         status = {
             "task_id": task_id,
             "state": "running",
             "started_at": self._clock().isoformat(),
             "requirement": requirement_text[:500],
             "documents": [document.path for document in documents],
+            "input_saved": True,
         }
+        if retried_from:
+            status["retried_from"] = retried_from
         self._store.put_status(caller.user_id, session_id, task_id, status)
         busy_id = self._busy.add_async_task("generate_prd", {"task_id": task_id})
         future = asyncio.run_coroutine_threadsafe(
@@ -213,3 +240,75 @@ class PrdJobRunner:
 
     def result(self, *, caller: Caller, session_id: str, task_id: str) -> str | None:
         return self._store.get_prd(caller.user_id, session_id, task_id)
+
+    def running_tasks(self, *, caller: Caller, session_id: str) -> list[str]:
+        """Task IDs in this session that are still running (lost ones excluded)."""
+
+        running = []
+        for task_id in self._store.task_ids(caller.user_id, session_id):
+            status = self.status(caller=caller, session_id=session_id, task_id=task_id)
+            if status and status.get("state") == "running":
+                running.append(task_id)
+        return running
+
+    def retry(
+        self,
+        *,
+        caller: Caller,
+        session_id: str,
+        task_id: str,
+        loop: asyncio.AbstractEventLoop,
+    ) -> dict[str, Any] | None:
+        """Start a new task with a failed task's saved input; None if not found.
+
+        Raises JobRejected when the task cannot be retried and ValueError when
+        the task ID is malformed. No model call: the input is reused as saved.
+        """
+
+        status = self.status(caller=caller, session_id=session_id, task_id=task_id)
+        if status is None:
+            return None
+        if status.get("state") != "failed":
+            raise JobRejected("Only a failed task can be retried.")
+        if status.get("retried_as"):
+            raise JobRejected(
+                f"This task was already retried as {status['retried_as']}."
+            )
+        code = (status.get("error") or {}).get("code")
+        if code in NOT_RETRYABLE:
+            raise JobRejected(f"A task that failed with {code} cannot be retried.")
+        saved = self._store.get_request(caller.user_id, session_id, task_id)
+        if saved is None:
+            raise JobRejected(
+                "This task's input was not saved. Attach the documents again and "
+                "ask in chat to regenerate."
+            )
+        try:
+            requirement_text = saved["requirement_text"]
+            documents = _DOCUMENTS.validate_python(saved["documents"])
+        except (KeyError, TypeError, ValidationError):
+            raise JobRejected("This task's saved input is unreadable.") from None
+
+        started = self._launch(
+            caller, session_id, requirement_text, documents, loop, retried_from=task_id
+        )
+        new_id = started["task_id"]
+        try:
+            self._store.put_status(
+                caller.user_id, session_id, task_id, {**status, "retried_as": new_id}
+            )
+            self._memory.record(
+                user_id=caller.user_id,
+                session_id=session_id,
+                turns=[
+                    (
+                        "ASSISTANT",
+                        f"PRD task {task_id} was retried as task {new_id} with the "
+                        "same requirement and documents.",
+                    )
+                ],
+            )
+        except Exception:
+            # The new task is already running; only the bookkeeping is missing.
+            logger.exception("could not record PRD retry", extra={"task_id": task_id})
+        return started
