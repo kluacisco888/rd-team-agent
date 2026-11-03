@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
@@ -18,6 +19,8 @@ from pydantic import ConfigDict, Field
 
 from prd_agent.contracts import GenerationRequest, SourceType, StrictModel
 from prd_agent.workflow import RetrievalBundle, RetrievedChunk
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeBaseRetrievalError(RuntimeError):
@@ -242,7 +245,9 @@ class AgentCoreKnowledgeBaseRetriever:
     The task scope comes from ``request.knowledge_base_snapshot``, which the
     Runtime assigns per invocation and the caller cannot set. Results crossing a
     project, task, or repository-version boundary fail closed before reaching a
-    Strands prompt.
+    Strands prompt. At most ``max_queries`` distinct queries are sent: the
+    analyzer is asked for that many, most important first, and any beyond the
+    budget are dropped rather than failing the whole generation.
     """
 
     def __init__(
@@ -277,9 +282,13 @@ class AgentCoreKnowledgeBaseRetriever:
                 "at least one non-empty query is required"
             )
         if len(normalized_queries) > self._max_queries:
-            raise KnowledgeBaseRetrievalError(
-                f"query count exceeds configured maximum of {self._max_queries}"
+            logger.warning(
+                "dropping %d of %d search queries over the budget of %d",
+                len(normalized_queries) - self._max_queries,
+                len(normalized_queries),
+                self._max_queries,
             )
+            normalized_queries = normalized_queries[: self._max_queries]
 
         metadata_filter = task_scope_filter(
             project_id=request.project_id,

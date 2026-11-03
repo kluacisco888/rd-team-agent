@@ -1,0 +1,523 @@
+import AppKit
+import RDTeamAgentCore
+import SwiftUI
+
+struct RootView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        switch model.authPhase {
+        case .signedIn: MainView()
+        case .signedOut, .signingIn: LoginView()
+        case .restoring: RestoringView()
+        }
+    }
+}
+
+struct RestoringView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("正在恢复登录…")
+            Text("如果系统弹窗询问能否使用钥匙串里的登录令牌，选「允许」即可；选「拒绝」会回到登录页。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct LoginView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 96, height: 96)
+            Text("研发团队 Agent").font(.largeTitle.bold())
+            Text("用公司账号登录后开始对话").foregroundStyle(.secondary)
+            Button {
+                model.signIn()
+            } label: {
+                Text(model.authPhase == .signingIn ? "正在登录…" : "登录").frame(minWidth: 160)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            .disabled(model.authPhase == .signingIn)
+            if let message = model.authMessage {
+                Text(message)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+            }
+            SettingsLink { Text("连接设置…") }
+                .buttonStyle(.link)
+            Text("测试账号由管理员创建，不开放注册。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// View-only state. SwiftUI's `@State` is a macro in the macOS 27 SDK and its
+/// plugin ships only with Xcode, so views keep local state in an object instead
+/// and the app still builds with just the Command Line Tools.
+@MainActor
+final class ViewState: ObservableObject {
+    @Published var showInspector = true
+    @Published var isDropTarget = false
+}
+
+struct MainView: View {
+    @EnvironmentObject private var model: AppModel
+    @StateObject private var state = ViewState()
+
+    var body: some View {
+        NavigationSplitView {
+            SessionSidebar()
+                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
+        } detail: {
+            ChatView()
+                .navigationTitle(model.currentTitle)
+                .inspector(isPresented: $state.showInspector) {
+                    InspectorView()
+                        .inspectorColumnWidth(min: 280, ideal: 330, max: 440)
+                }
+                .toolbar {
+                    ToolbarItemGroup {
+                        Button {
+                            model.reloadCurrentSession()
+                        } label: {
+                            Label("重新载入", systemImage: "arrow.clockwise")
+                        }
+                        .help("从服务端重新载入这个会话的记录和任务")
+                        .disabled(model.selectedSessionId == nil || model.isSendingHere)
+                        Button {
+                            state.showInspector.toggle()
+                        } label: {
+                            Label("检查器", systemImage: "sidebar.right")
+                        }
+                        .help("显示或隐藏右侧的任务、附件和长期记忆")
+                    }
+                }
+        }
+    }
+}
+
+/// Sidebar-only state: collapsed groups and the open dialog.
+@MainActor
+final class SidebarState: ObservableObject {
+    enum NameDialog: Equatable {
+        case renameSession(String)
+        case newGroup(moving: String?)
+        case renameGroup(String)
+
+        var title: String {
+            switch self {
+            case .renameSession: "重命名会话"
+            case .newGroup: "新建分组"
+            case .renameGroup: "重命名分组"
+            }
+        }
+    }
+
+    @Published var collapsedGroups: Set<String> = []
+    @Published var nameDialog: NameDialog?
+    @Published var nameText = ""
+    @Published var groupToDelete: SessionGroup?
+    @Published var sessionToDelete: SessionItem?
+
+    func ask(_ dialog: NameDialog, prefill: String = "") {
+        nameText = prefill
+        nameDialog = dialog
+    }
+}
+
+struct SessionSidebar: View {
+    @EnvironmentObject private var model: AppModel
+    @StateObject private var state = SidebarState()
+
+    var body: some View {
+        List(selection: $model.selectedSessionId) {
+            if model.groups.isEmpty {
+                Section("会话") {
+                    if model.sessions.isEmpty {
+                        Text("还没有会话").foregroundStyle(.secondary)
+                    }
+                    rows(model.sessions)
+                }
+            } else {
+                ForEach(model.groups) { group in
+                    Section(isExpanded: expansion(of: group.id)) {
+                        let members = model.sessions.filter { $0.groupId == group.id }
+                        if members.isEmpty {
+                            Text("还没有会话").foregroundStyle(.secondary)
+                        }
+                        rows(members)
+                    } header: {
+                        Text(group.name)
+                            .contextMenu {
+                                Button("重命名分组…") { state.ask(.renameGroup(group.id), prefill: group.name) }
+                                Button("删除分组…") { state.groupToDelete = group }
+                            }
+                    }
+                }
+                let ungrouped = model.sessions.filter { session in
+                    session.groupId == nil || !model.groups.contains { $0.id == session.groupId }
+                }
+                if !ungrouped.isEmpty {
+                    Section("未分组") { rows(ungrouped) }
+                }
+            }
+        }
+        .alert(state.nameDialog?.title ?? "", isPresented: nameDialogShown, presenting: state.nameDialog) { dialog in
+            TextField("名称", text: $state.nameText)
+            Button("保存") { saveName(dialog) }
+                .keyboardShortcut(.defaultAction)
+            Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "删除分组「\(state.groupToDelete?.name ?? "")」？",
+            isPresented: deleteDialogShown,
+            titleVisibility: .visible,
+            presenting: state.groupToDelete
+        ) { group in
+            Button("删除分组", role: .destructive) { model.deleteGroup(group.id) }
+            Button("取消", role: .cancel) {}
+        } message: { group in
+            Text("里面的 \(model.sessions.filter { $0.groupId == group.id }.count) 个会话会回到「未分组」，会话本身不删。")
+        }
+        .onDeleteCommand {
+            guard let id = model.selectedSessionId, let session = model.sessions.first(where: { $0.id == id }) else { return }
+            state.sessionToDelete = session
+        }
+        .background {
+            // Kept on its own view: two dialogs on one view can conflict.
+            Color.clear.confirmationDialog(
+                "删除会话「\(state.sessionToDelete?.title ?? "")」？",
+                isPresented: deleteSessionDialogShown,
+                titleVisibility: .visible,
+                presenting: state.sessionToDelete
+            ) { session in
+                Button("删除会话", role: .destructive) { Task { await model.deleteSession(session.id) } }
+                Button("取消", role: .cancel) {}
+            } message: { _ in
+                Text("""
+                会删除服务端上的：这个会话的对话记录、会话摘要、生成的 PRD 结果。删除后不能恢复。
+                会保留：你的偏好和事实记忆（跨会话通用），以及已存到本机「文稿/研发团队 Agent」的 PRD 文件。
+                """)
+            }
+        }
+        .safeAreaInset(edge: .top) {
+            Button {
+                model.newSession()
+            } label: {
+                Label("新会话", systemImage: "square.and.pencil").frame(maxWidth: .infinity)
+            }
+            .controlSize(.large)
+            .padding(.horizontal, 10)
+            .padding(.top, 6)
+            .disabled(model.isSending)
+        }
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Label(model.identity?.username ?? "", systemImage: "person.crop.circle")
+                    .lineLimit(1)
+                Spacer()
+                Menu {
+                    Button("新建分组…") { state.ask(.newGroup(moving: nil)) }
+                    Button("刷新会话列表") { Task { await model.refreshSessions() } }
+                    SettingsLink { Text("连接设置…") }
+                    Divider()
+                    Button("退出登录") { model.signOut() }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+            .padding(10)
+        }
+    }
+
+    private func rows(_ items: [SessionItem]) -> some View {
+        ForEach(items) { session in
+            SessionRow(session: session, state: state)
+                .tag(session.id as String?)
+        }
+    }
+
+    private func expansion(of groupId: String) -> Binding<Bool> {
+        Binding(
+            get: { !state.collapsedGroups.contains(groupId) },
+            set: { expanded in
+                if expanded {
+                    state.collapsedGroups.remove(groupId)
+                } else {
+                    state.collapsedGroups.insert(groupId)
+                }
+            }
+        )
+    }
+
+    private var nameDialogShown: Binding<Bool> {
+        Binding(get: { state.nameDialog != nil }, set: { if !$0 { state.nameDialog = nil } })
+    }
+
+    private var deleteDialogShown: Binding<Bool> {
+        Binding(get: { state.groupToDelete != nil }, set: { if !$0 { state.groupToDelete = nil } })
+    }
+
+    private var deleteSessionDialogShown: Binding<Bool> {
+        Binding(get: { state.sessionToDelete != nil }, set: { if !$0 { state.sessionToDelete = nil } })
+    }
+
+    /// A rejected name (empty, too long, taken) is reported in the banner.
+    private func saveName(_ dialog: SidebarState.NameDialog) {
+        let text = state.nameText
+        let error: String? = switch dialog {
+        case .renameSession(let id): model.renameSession(id, to: text)
+        case .newGroup(let sessionId): model.createGroup(named: text, moving: sessionId)
+        case .renameGroup(let id): model.renameGroup(id, to: text)
+        }
+        if let error { model.banner = error }
+    }
+}
+
+private struct SessionRow: View {
+    @EnvironmentObject private var model: AppModel
+    let session: SessionItem
+    let state: SidebarState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(session.title).lineLimit(1)
+            if model.deletingSessionId == session.id {
+                HStack(spacing: 4) {
+                    ProgressView().controlSize(.mini)
+                    Text("正在删除…")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                Text(Format.dateTime(session.createdAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+        .contextMenu {
+            Button("重命名…") { state.ask(.renameSession(session.id), prefill: session.title) }
+            Menu("移到分组") {
+                ForEach(model.groups) { group in
+                    // A menu toggle draws the checkmark on the current group.
+                    Toggle(group.name, isOn: Binding(
+                        get: { session.groupId == group.id },
+                        set: { isOn in if isOn { report(model.moveSession(session.id, toGroup: group.id)) } }
+                    ))
+                }
+                if !model.groups.isEmpty { Divider() }
+                Button("新建分组…") { state.ask(.newGroup(moving: session.id)) }
+                if session.groupId != nil {
+                    Button("移出分组") { report(model.moveSession(session.id, toGroup: nil)) }
+                }
+            }
+            Divider()
+            Button("删除…", role: .destructive) { state.sessionToDelete = session }
+                .disabled(model.deletingSessionId != nil || model.sendingSessionId == session.id)
+        }
+    }
+
+    private func report(_ error: String?) {
+        if let error { model.banner = error }
+    }
+}
+
+struct ChatView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let banner = model.banner {
+                HStack(alignment: .top) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(banner).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                    Button { model.banner = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.12))
+            }
+            transcript
+            Divider()
+            ComposerView()
+        }
+    }
+
+    private var transcript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    if model.loadingSessionId != nil, model.loadingSessionId == model.selectedSessionId {
+                        ProgressView("正在载入会话记录…").frame(maxWidth: .infinity)
+                    } else if model.messages.isEmpty {
+                        EmptyChatHint()
+                    }
+                    ForEach(model.messages) { message in
+                        MessageRow(message: message, streaming: model.isSendingHere && message.id == model.messages.last?.id)
+                    }
+                    Color.clear.frame(height: 1).id("bottom")
+                }
+                .padding(20)
+            }
+            .onChange(of: model.messages.last?.text) {
+                withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            .onChange(of: model.selectedSessionId) {
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
+        }
+    }
+}
+
+private struct EmptyChatHint: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("说说你要做的功能").font(.title3.bold())
+            Text("附上需求材料（.md 或 PDF），我会先把需求问清楚，再在后台生成 PRD。生成依据是这些附件和已接入的示例代码仓。")
+                .foregroundStyle(.secondary)
+            Text("例如：请根据附件，为管理后台写一份「CSV 批量导入用户」的 PRD。")
+                .foregroundStyle(.secondary)
+                .italic()
+        }
+        .padding(.top, 40)
+        .frame(maxWidth: 560, alignment: .leading)
+    }
+}
+
+private struct MessageRow: View {
+    let message: ChatMessage
+    let streaming: Bool
+
+    var body: some View {
+        switch message.role {
+        case .user:
+            HStack {
+                Spacer(minLength: 80)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(message.text)
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.15)))
+                    if !message.attachments.isEmpty {
+                        Label(message.attachments.joined(separator: "、"), systemImage: "paperclip")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        case .assistant:
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if message.text.isEmpty, streaming {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        MarkdownView(markdown: message.text)
+                            .textSelection(.enabled)
+                            .foregroundStyle(message.isError ? Color.red : Color.primary)
+                    }
+                }
+                Spacer(minLength: 80)
+            }
+        case .notice:
+            Label(message.text, systemImage: "info.circle")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+struct ComposerView: View {
+    @EnvironmentObject private var model: AppModel
+    @StateObject private var state = ViewState()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !model.attachments.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack {
+                        ForEach(model.attachments) { attachment in
+                            HStack(spacing: 4) {
+                                Image(systemName: attachment.kind == .pdf ? "doc.richtext" : "doc.text")
+                                Text(attachment.name).lineLimit(1)
+                                Button { model.removeAttachment(attachment.name) } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(model.isSendingHere)
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                        }
+                    }
+                }
+            }
+            if let error = model.attachmentError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                Button {
+                    model.chooseAttachments()
+                } label: {
+                    if model.isLoadingAttachments {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "paperclip")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .font(.title3)
+                .help("附加 .md 或 PDF")
+                .disabled(model.isLoadingAttachments)
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $model.draft)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 44, maxHeight: 140)
+                    if model.draft.isEmpty {
+                        Text("回复，或拖入 .md / PDF 文件…（⌘↩ 发送）")
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 5)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(state.isDropTarget ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: state.isDropTarget ? 2 : 1)
+                )
+                Button("发送") { model.send() }
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canSend)
+            }
+        }
+        .padding(12)
+        .dropDestination(for: URL.self) { urls, _ in
+            model.addAttachments(urls)
+            return true
+        } isTargeted: { state.isDropTarget = $0 }
+    }
+}

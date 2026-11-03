@@ -147,7 +147,9 @@ def build_runtime_app(
         project_id=settings.project_id,
     )
     workflow = PrdWorkflow(
-        analyzer=StrandsRequirementAnalyzer(agent_factory),
+        analyzer=StrandsRequirementAnalyzer(
+            agent_factory, max_search_queries=settings.retrieval_max_queries
+        ),
         retriever=retriever,
         composer=StrandsPrdComposer(agent_factory),
         max_repair_attempts=1,
