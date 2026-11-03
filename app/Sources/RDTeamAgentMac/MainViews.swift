@@ -111,26 +111,87 @@ struct MainView: View {
     }
 }
 
+/// Sidebar-only state: collapsed groups and the open dialog.
+@MainActor
+final class SidebarState: ObservableObject {
+    enum NameDialog: Equatable {
+        case renameSession(String)
+        case newGroup(moving: String?)
+        case renameGroup(String)
+
+        var title: String {
+            switch self {
+            case .renameSession: "重命名会话"
+            case .newGroup: "新建分组"
+            case .renameGroup: "重命名分组"
+            }
+        }
+    }
+
+    @Published var collapsedGroups: Set<String> = []
+    @Published var nameDialog: NameDialog?
+    @Published var nameText = ""
+    @Published var groupToDelete: SessionGroup?
+
+    func ask(_ dialog: NameDialog, prefill: String = "") {
+        nameText = prefill
+        nameDialog = dialog
+    }
+}
+
 struct SessionSidebar: View {
     @EnvironmentObject private var model: AppModel
+    @StateObject private var state = SidebarState()
 
     var body: some View {
         List(selection: $model.selectedSessionId) {
-            Section("会话") {
-                if model.sessions.isEmpty {
-                    Text("还没有会话").foregroundStyle(.secondary)
-                }
-                ForEach(model.sessions) { session in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(session.title).lineLimit(1)
-                        Text(Format.dateTime(session.createdAt))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            if model.groups.isEmpty {
+                Section("会话") {
+                    if model.sessions.isEmpty {
+                        Text("还没有会话").foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 2)
-                    .tag(session.id as String?)
+                    rows(model.sessions)
+                }
+            } else {
+                ForEach(model.groups) { group in
+                    Section(isExpanded: expansion(of: group.id)) {
+                        let members = model.sessions.filter { $0.groupId == group.id }
+                        if members.isEmpty {
+                            Text("还没有会话").foregroundStyle(.secondary)
+                        }
+                        rows(members)
+                    } header: {
+                        Text(group.name)
+                            .contextMenu {
+                                Button("重命名分组…") { state.ask(.renameGroup(group.id), prefill: group.name) }
+                                Button("删除分组…") { state.groupToDelete = group }
+                            }
+                    }
+                }
+                let ungrouped = model.sessions.filter { session in
+                    session.groupId == nil || !model.groups.contains { $0.id == session.groupId }
+                }
+                if !ungrouped.isEmpty {
+                    Section("未分组") { rows(ungrouped) }
                 }
             }
+        }
+        .alert(state.nameDialog?.title ?? "", isPresented: nameDialogShown, presenting: state.nameDialog) { dialog in
+            TextField("名称", text: $state.nameText)
+            Button("保存") { saveName(dialog) }
+                .keyboardShortcut(.defaultAction)
+            Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "删除分组「\(state.groupToDelete?.name ?? "")」？",
+            isPresented: deleteDialogShown,
+            titleVisibility: .visible,
+            presenting: state.groupToDelete
+        ) { group in
+            Button("删除分组", role: .destructive) { model.deleteGroup(group.id) }
+            Button("取消", role: .cancel) {}
+        } message: { group in
+            Text("里面的 \(model.sessions.filter { $0.groupId == group.id }.count) 个会话会回到「未分组」，会话本身不删。")
         }
         .safeAreaInset(edge: .top) {
             Button {
@@ -149,6 +210,7 @@ struct SessionSidebar: View {
                     .lineLimit(1)
                 Spacer()
                 Menu {
+                    Button("新建分组…") { state.ask(.newGroup(moving: nil)) }
                     Button("刷新会话列表") { Task { await model.refreshSessions() } }
                     SettingsLink { Text("连接设置…") }
                     Divider()
@@ -161,6 +223,82 @@ struct SessionSidebar: View {
             }
             .padding(10)
         }
+    }
+
+    private func rows(_ items: [SessionItem]) -> some View {
+        ForEach(items) { session in
+            SessionRow(session: session, state: state)
+                .tag(session.id as String?)
+        }
+    }
+
+    private func expansion(of groupId: String) -> Binding<Bool> {
+        Binding(
+            get: { !state.collapsedGroups.contains(groupId) },
+            set: { expanded in
+                if expanded {
+                    state.collapsedGroups.remove(groupId)
+                } else {
+                    state.collapsedGroups.insert(groupId)
+                }
+            }
+        )
+    }
+
+    private var nameDialogShown: Binding<Bool> {
+        Binding(get: { state.nameDialog != nil }, set: { if !$0 { state.nameDialog = nil } })
+    }
+
+    private var deleteDialogShown: Binding<Bool> {
+        Binding(get: { state.groupToDelete != nil }, set: { if !$0 { state.groupToDelete = nil } })
+    }
+
+    /// A rejected name (empty, too long, taken) is reported in the banner.
+    private func saveName(_ dialog: SidebarState.NameDialog) {
+        let text = state.nameText
+        let error: String? = switch dialog {
+        case .renameSession(let id): model.renameSession(id, to: text)
+        case .newGroup(let sessionId): model.createGroup(named: text, moving: sessionId)
+        case .renameGroup(let id): model.renameGroup(id, to: text)
+        }
+        if let error { model.banner = error }
+    }
+}
+
+private struct SessionRow: View {
+    @EnvironmentObject private var model: AppModel
+    let session: SessionItem
+    let state: SidebarState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(session.title).lineLimit(1)
+            Text(Format.dateTime(session.createdAt))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .contextMenu {
+            Button("重命名…") { state.ask(.renameSession(session.id), prefill: session.title) }
+            Menu("移到分组") {
+                ForEach(model.groups) { group in
+                    // A menu toggle draws the checkmark on the current group.
+                    Toggle(group.name, isOn: Binding(
+                        get: { session.groupId == group.id },
+                        set: { isOn in if isOn { report(model.moveSession(session.id, toGroup: group.id)) } }
+                    ))
+                }
+                if !model.groups.isEmpty { Divider() }
+                Button("新建分组…") { state.ask(.newGroup(moving: session.id)) }
+                if session.groupId != nil {
+                    Button("移出分组") { report(model.moveSession(session.id, toGroup: nil)) }
+                }
+            }
+        }
+    }
+
+    private func report(_ error: String?) {
+        if let error { model.banner = error }
     }
 }
 

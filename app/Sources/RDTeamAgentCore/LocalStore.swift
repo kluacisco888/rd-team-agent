@@ -8,24 +8,122 @@ public struct SessionRecord: Codable, Sendable, Equatable {
     public var taskIds: [String]
     /// Task ID to the path of the PRD saved on this Mac.
     public var savedFiles: [String: String]
+    /// The group this session is filed under on this Mac; nil is 未分组.
+    public var groupId: String?
 
-    public init(title: String? = nil, createdAt: Date = Date(), taskIds: [String] = [], savedFiles: [String: String] = [:]) {
+    public init(
+        title: String? = nil, createdAt: Date = Date(), taskIds: [String] = [],
+        savedFiles: [String: String] = [:], groupId: String? = nil
+    ) {
         self.title = title
         self.createdAt = createdAt
         self.taskIds = taskIds
         self.savedFiles = savedFiles
+        self.groupId = groupId
+    }
+}
+
+/// A folder in the session list. Groups exist only on this Mac.
+public struct SessionGroup: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public var name: String
+
+    public init(id: String = UUID().uuidString, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
+public enum LocalIndexError: LocalizedError, Equatable {
+    case emptyName
+    case nameTooLong(limit: Int)
+    case duplicateGroupName
+    case unknownGroup
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptyName: "名称不能为空。"
+        case .nameTooLong(let limit): "名称最多 \(limit) 个字。"
+        case .duplicateGroupName: "已有同名分组。"
+        case .unknownGroup: "这个分组已经不存在了。"
+        }
     }
 }
 
 public struct LocalIndex: Codable, Sendable, Equatable {
+    public static let maxSessionTitleLength = 60
+    public static let maxGroupNameLength = 30
+
     public var sessions: [String: SessionRecord]
     /// Runtime session ID for requests that belong to no conversation (session
     /// list, long-term memory), kept stable so they reuse one Runtime session.
     public var utilitySessionId: String?
+    /// In the order they were created, which is the order the sidebar shows.
+    public var groups: [SessionGroup]
 
-    public init(sessions: [String: SessionRecord] = [:], utilitySessionId: String? = nil) {
+    public init(sessions: [String: SessionRecord] = [:], utilitySessionId: String? = nil, groups: [SessionGroup] = []) {
         self.sessions = sessions
         self.utilitySessionId = utilitySessionId
+        self.groups = groups
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessions, utilitySessionId, groups
+    }
+
+    /// Files written before groups existed have no "groups" key.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessions = try container.decodeIfPresent([String: SessionRecord].self, forKey: .sessions) ?? [:]
+        utilitySessionId = try container.decodeIfPresent(String.self, forKey: .utilitySessionId)
+        groups = try container.decodeIfPresent([SessionGroup].self, forKey: .groups) ?? []
+    }
+
+    /// `createdAt` is used only when this Mac has no record of the session yet
+    /// (one started elsewhere or before the app kept titles).
+    public mutating func renameSession(_ id: String, to title: String, createdAt: Date) throws {
+        let name = try Self.validName(title, limit: Self.maxSessionTitleLength)
+        sessions[id, default: SessionRecord(createdAt: createdAt)].title = name
+    }
+
+    @discardableResult
+    public mutating func createGroup(named name: String) throws -> SessionGroup {
+        let group = SessionGroup(name: try validGroupName(name, excluding: nil))
+        groups.append(group)
+        return group
+    }
+
+    public mutating func renameGroup(_ id: String, to name: String) throws {
+        guard let position = groups.firstIndex(where: { $0.id == id }) else { throw LocalIndexError.unknownGroup }
+        groups[position].name = try validGroupName(name, excluding: id)
+    }
+
+    /// The group's sessions go back to 未分组; no session is removed.
+    public mutating func deleteGroup(_ id: String) {
+        groups.removeAll { $0.id == id }
+        for (sessionId, record) in sessions where record.groupId == id {
+            sessions[sessionId]?.groupId = nil
+        }
+    }
+
+    /// A nil group moves the session to 未分组.
+    public mutating func moveSession(_ id: String, toGroup groupId: String?, createdAt: Date) throws {
+        if let groupId, !groups.contains(where: { $0.id == groupId }) { throw LocalIndexError.unknownGroup }
+        sessions[id, default: SessionRecord(createdAt: createdAt)].groupId = groupId
+    }
+
+    private static func validName(_ raw: String, limit: Int) throws -> String {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw LocalIndexError.emptyName }
+        guard name.count <= limit else { throw LocalIndexError.nameTooLong(limit: limit) }
+        return name
+    }
+
+    private func validGroupName(_ raw: String, excluding id: String?) throws -> String {
+        let name = try Self.validName(raw, limit: Self.maxGroupNameLength)
+        let taken = groups.contains { $0.id != id && $0.name.compare(name, options: .caseInsensitive) == .orderedSame }
+        if taken { throw LocalIndexError.duplicateGroupName }
+        return name
     }
 
     /// A short title for the session list and PRD file names: a quoted feature

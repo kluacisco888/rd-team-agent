@@ -122,6 +122,110 @@ private func makePDF(in folder: URL, name: String, text: String?) throws -> URL 
         #expect(LocalIndex.title(fromMessage: long) == String(repeating: "长", count: 20) + "…")
     }
 
+    @Test func indexFilesFromBeforeGroupsStillLoad() throws {
+        let json = """
+        {
+          "sessions" : {
+            "s1" : {
+              "createdAt" : "2026-11-02T12:01:00Z",
+              "savedFiles" : { "task-1" : "/tmp/a.md" },
+              "taskIds" : [ "task-1" ],
+              "title" : "CSV 导入"
+            }
+          },
+          "utilitySessionId" : "rdta-utility"
+        }
+        """
+        let file = try temporaryFolder().appendingPathComponent("u1", isDirectory: true)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: file.appendingPathComponent("sessions.json"))
+        let index = LocalIndexStore(userId: "u1", baseFolder: file.deletingLastPathComponent()).load()
+
+        #expect(index.utilitySessionId == "rdta-utility")
+        #expect(index.groups.isEmpty)
+        let record = try #require(index.sessions["s1"])
+        #expect(record.title == "CSV 导入")
+        #expect(record.createdAt == Date(timeIntervalSince1970: 1_793_620_860))
+        #expect(record.taskIds == ["task-1"])
+        #expect(record.savedFiles == ["task-1": "/tmp/a.md"])
+        #expect(record.groupId == nil)
+    }
+
+    @Test func renamingTrimsAndCreatesMissingRecords() throws {
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        var index = LocalIndex()
+        index.sessions["s1"] = SessionRecord(title: "旧名", createdAt: created, taskIds: ["task-1"])
+
+        try index.renameSession("s1", to: "  新名字 \n", createdAt: Date())
+        #expect(index.sessions["s1"] == SessionRecord(title: "新名字", createdAt: created, taskIds: ["task-1"]))
+
+        try index.renameSession("server-only", to: "服务端会话", createdAt: created)
+        #expect(index.sessions["server-only"] == SessionRecord(title: "服务端会话", createdAt: created))
+
+        #expect(throws: LocalIndexError.emptyName) { try index.renameSession("s1", to: "  ", createdAt: created) }
+        #expect(throws: LocalIndexError.nameTooLong(limit: 60)) {
+            try index.renameSession("s1", to: String(repeating: "名", count: 61), createdAt: created)
+        }
+        try index.renameSession("s1", to: String(repeating: "名", count: 60), createdAt: created)
+        #expect(index.sessions["s1"]?.title?.count == 60)
+    }
+
+    @Test func groupNamesAreValidatedAndUnique() throws {
+        var index = LocalIndex()
+        let first = try index.createGroup(named: " 管理后台 ")
+        let second = try index.createGroup(named: "Mobile")
+        #expect(index.groups == [first, second])
+        #expect(first.name == "管理后台")
+
+        #expect(throws: LocalIndexError.duplicateGroupName) { try index.createGroup(named: "管理后台") }
+        #expect(throws: LocalIndexError.duplicateGroupName) { try index.createGroup(named: "mobile") }
+        #expect(throws: LocalIndexError.emptyName) { try index.createGroup(named: "") }
+        #expect(throws: LocalIndexError.nameTooLong(limit: 30)) {
+            try index.createGroup(named: String(repeating: "组", count: 31))
+        }
+
+        try index.renameGroup(second.id, to: "MOBILE")
+        #expect(index.groups[1].name == "MOBILE")
+        #expect(throws: LocalIndexError.duplicateGroupName) { try index.renameGroup(second.id, to: "管理后台") }
+        #expect(throws: LocalIndexError.unknownGroup) { try index.renameGroup("missing", to: "新") }
+        #expect(index.groups.count == 2)
+    }
+
+    @Test func movingAndDeletingGroupsKeepsSessions() throws {
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        var index = LocalIndex()
+        index.sessions["s1"] = SessionRecord(title: "一", createdAt: created)
+        index.sessions["s2"] = SessionRecord(title: "二", createdAt: created)
+        let group = try index.createGroup(named: "管理后台")
+        let other = try index.createGroup(named: "Mobile")
+
+        try index.moveSession("s1", toGroup: group.id, createdAt: Date())
+        try index.moveSession("s2", toGroup: other.id, createdAt: Date())
+        try index.moveSession("server-only", toGroup: group.id, createdAt: created)
+        #expect(index.sessions["s1"]?.groupId == group.id)
+        #expect(index.sessions["server-only"] == SessionRecord(createdAt: created, groupId: group.id))
+        #expect(throws: LocalIndexError.unknownGroup) { try index.moveSession("s1", toGroup: "missing", createdAt: created) }
+        #expect(index.sessions["s1"]?.groupId == group.id)
+
+        try index.moveSession("s2", toGroup: nil, createdAt: created)
+        #expect(index.sessions["s2"]?.groupId == nil)
+
+        index.deleteGroup(group.id)
+        #expect(index.groups == [other])
+        #expect(index.sessions.count == 3)
+        #expect(index.sessions["s1"] == SessionRecord(title: "一", createdAt: created))
+        #expect(index.sessions["server-only"]?.groupId == nil)
+    }
+
+    @Test func groupsSurviveSaveAndLoad() throws {
+        let store = LocalIndexStore(userId: "u2", baseFolder: try temporaryFolder())
+        var index = LocalIndex()
+        let group = try index.createGroup(named: "管理后台")
+        try index.moveSession("s1", toGroup: group.id, createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        try store.save(index)
+        #expect(store.load() == index)
+    }
+
     @Test func prdFileNamesAreSafeAndNeverOverwrite() throws {
         let id = "task-e52f687514e443f99ee1ec6f2164d01c"
         #expect(PRDFileWriter.fileName(title: "CSV/批量:导入…", taskId: id) == "CSV 批量 导入-e52f6875.md")

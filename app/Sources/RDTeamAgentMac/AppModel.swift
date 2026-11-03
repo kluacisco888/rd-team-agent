@@ -18,6 +18,7 @@ struct SessionItem: Identifiable, Equatable {
     let id: String
     let title: String
     let createdAt: Date?
+    let groupId: String?
 }
 
 /// All UI state. Lives on the main actor; network work runs inside URLSession.
@@ -41,6 +42,7 @@ final class AppModel: ObservableObject {
     // MARK: Sessions and chat
 
     @Published private(set) var sessions: [SessionItem] = []
+    @Published private(set) var groups: [SessionGroup] = []
     @Published var selectedSessionId: String? {
         didSet { if oldValue != selectedSessionId { selectionChanged() } }
     }
@@ -273,6 +275,7 @@ final class AppModel: ObservableObject {
         index = LocalIndex()
         serverSessions = []
         sessions = []
+        groups = []
         selectedSessionId = nil
         transcripts = [:]
         attachmentsBySession = [:]
@@ -347,13 +350,71 @@ final class AppModel: ObservableObject {
             let record = index.sessions[summary.sessionId]
             let created = summary.createdAt ?? record?.createdAt
             items[summary.sessionId] = SessionItem(
-                id: summary.sessionId, title: record?.title ?? Format.untitled(created), createdAt: created
+                id: summary.sessionId, title: record?.title ?? Format.untitled(created), createdAt: created,
+                groupId: record?.groupId
             )
         }
         for (id, record) in index.sessions where items[id] == nil {
-            items[id] = SessionItem(id: id, title: record.title ?? Format.untitled(record.createdAt), createdAt: record.createdAt)
+            items[id] = SessionItem(
+                id: id, title: record.title ?? Format.untitled(record.createdAt), createdAt: record.createdAt,
+                groupId: record.groupId
+            )
         }
         sessions = items.values.sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
+        groups = index.groups
+    }
+
+    // MARK: Titles and groups (kept on this Mac only)
+
+    /// Each returns the message to show, or nil once the change is saved.
+    func renameSession(_ id: String, to title: String) -> String? {
+        let created = recordCreatedAt(id)
+        return changeIndex { try $0.renameSession(id, to: title, createdAt: created) }
+    }
+
+    /// With a session ID, the new group also receives that session.
+    func createGroup(named name: String, moving sessionId: String? = nil) -> String? {
+        let created = sessionId.map { recordCreatedAt($0) }
+        return changeIndex { index in
+            let group = try index.createGroup(named: name)
+            if let sessionId, let created {
+                try index.moveSession(sessionId, toGroup: group.id, createdAt: created)
+            }
+        }
+    }
+
+    func renameGroup(_ id: String, to name: String) -> String? {
+        changeIndex { try $0.renameGroup(id, to: name) }
+    }
+
+    func deleteGroup(_ id: String) {
+        _ = changeIndex { $0.deleteGroup(id) }
+    }
+
+    func moveSession(_ id: String, toGroup groupId: String?) -> String? {
+        let created = recordCreatedAt(id)
+        return changeIndex { try $0.moveSession(id, toGroup: groupId, createdAt: created) }
+    }
+
+    /// Applies a change to a copy, so a rejected name leaves the index as it was.
+    private func changeIndex(_ change: (inout LocalIndex) throws -> Void) -> String? {
+        var updated = index
+        do {
+            try change(&updated)
+        } catch {
+            return error.localizedDescription
+        }
+        index = updated
+        saveIndex()
+        rebuildSessions(server: nil)
+        return nil
+    }
+
+    /// For a session this Mac has no record of yet, the server's creation time.
+    private func recordCreatedAt(_ sessionId: String) -> Date {
+        index.sessions[sessionId]?.createdAt
+            ?? serverSessions.first { $0.sessionId == sessionId }?.createdAt
+            ?? Date()
     }
 
     func newSession() {
@@ -675,8 +736,7 @@ final class AppModel: ObservableObject {
     }
 
     private func remember(_ taskId: String, in sessionId: String) {
-        var record = index.sessions[sessionId]
-            ?? SessionRecord(createdAt: serverSessions.first { $0.sessionId == sessionId }?.createdAt ?? Date())
+        var record = index.sessions[sessionId] ?? SessionRecord(createdAt: recordCreatedAt(sessionId))
         guard !record.taskIds.contains(taskId) else { return }
         record.taskIds.append(taskId)
         index.sessions[sessionId] = record
