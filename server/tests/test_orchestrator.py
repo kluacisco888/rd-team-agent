@@ -879,6 +879,7 @@ class HandlerTest(unittest.IsolatedAsyncioTestCase):
         )
         listed = await self.run_handler(handler, {"action": "list_sessions"})
         self.assertEqual(listed[0]["sessions"], [])
+        self.assertEqual(listed[0]["deleted_session_ids"], [SESSION])
         # The other user's copy of the same session ID is untouched.
         self.assertEqual(
             len(memory(self.client).messages(user_id=OTHER, session_id=SESSION)), 2
@@ -889,6 +890,7 @@ class HandlerTest(unittest.IsolatedAsyncioTestCase):
             handler, {"action": "list_sessions"}, header=other
         )
         self.assertEqual([s["session_id"] for s in listed[0]["sessions"]], [SESSION])
+        self.assertEqual(listed[0]["deleted_session_ids"], [])
 
     async def test_delete_session_refuses_while_a_task_runs(self) -> None:
         self.seed_session(USER)

@@ -34,13 +34,20 @@ class SessionManager:
         self._store = store
         self._clock = clock
 
-    def list(self, *, caller: Caller) -> list[dict[str, Any]]:
+    def list(self, *, caller: Caller) -> tuple[list[dict[str, Any]], list[str]]:
+        """The caller's sessions, and the IDs of the ones they deleted.
+
+        The deleted IDs let an app drop its own record of a session that was
+        deleted on another device.
+        """
+
         deleted = self._store.deleted_sessions(caller.user_id)
-        return [
+        sessions = [
             session
             for session in self._memory.sessions(user_id=caller.user_id)
             if session["session_id"] not in deleted
         ]
+        return sessions, sorted(deleted)
 
     def delete(self, *, caller: Caller, session_id: str) -> dict[str, int]:
         """Delete the session's conversation, summaries and PRD results.

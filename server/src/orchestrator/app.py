@@ -131,8 +131,14 @@ class OrchestratorHandler:
                 async for event in self._chat(caller, session_id, payload):
                     yield event
             elif action == "list_sessions":
-                sessions = await asyncio.to_thread(self._sessions.list, caller=caller)
-                yield {"event": "sessions", "sessions": sessions}
+                sessions, deleted = await asyncio.to_thread(
+                    self._sessions.list, caller=caller
+                )
+                yield {
+                    "event": "sessions",
+                    "sessions": sessions,
+                    "deleted_session_ids": deleted,
+                }
             elif action == "delete_session":
                 async for event in self._delete_session(caller, session_id):
                     yield event
